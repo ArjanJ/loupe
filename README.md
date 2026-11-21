@@ -39,7 +39,8 @@ That one command scans the code, groups files into modules, writes the descripti
 
 ```
 loupe · mapping /home/you/your-app
-backend: claude (Claude Code CLI)
+✓ Model  Claude Code · Default
+backend: claude (Claude Code CLI, default model)
 [1/3] scanning structure + describing code …
 [2/3] finding relationships + flows …
 [3/3] rendering …
@@ -48,18 +49,40 @@ backend: claude (Claude Code CLI)
 
 - **Output:** `architecture.html` in the repo root, one self-contained file.
 - **Working files:** `.loupe/` in the repo holds the tree (`.loupe/tree.json`) and the answer cache (`.loupe/cache/`). Loupe writes `.loupe/.gitignore` so none of it is committed; you can also add `.loupe/` to your own `.gitignore`. Answers are keyed by prompt, and prompts include the code, so a rerun only pays for what changed.
-- **Model:** Loupe needs one of these, and uses the first it finds:
+- **Model:** Loupe needs one of these, and (unless you pick one) uses the first it finds:
   1. **`claude`** — [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed and signed in (the `claude` CLI on your `PATH`). Loupe runs it headless with tools disabled.
   2. **`anthropic`** — `ANTHROPIC_API_KEY` set: the Anthropic Messages API.
   3. **`openai`** — `OPENAI_API_KEY` set: the OpenAI Chat Completions API.
 
   With none of them, Loupe explains the options and exits before doing any work.
 
+**Choosing the model.** In a terminal, Loupe first asks which model to use, listing only what is set up on your machine. Use ↑↓ (or j/k) and Enter; Esc cancels. It preselects your last choice for that repo (kept in `.loupe/config.json`):
+
+```
+Which model should describe your code?
+
+  Claude Code · your subscription
+  ❯ ● Default            Claude Code's own default
+    ○ Sonnet             fast, balanced
+    ○ Opus               most thorough
+    ○ Haiku              fastest
+
+  Anthropic API · ANTHROPIC_API_KEY
+    ○ claude-sonnet-5-5  $2/$10 per MTok · fast, balanced
+    ○ claude-opus-5-5    $4/$20 · thorough — current default
+    ○ claude-haiku-5-5   from $0.10/$0.50 · fastest, cheapest
+
+  ↑↓ move · enter select · esc cancel
+```
+
+It never asks in CI, when input or output isn't a terminal (or `TERM=dumb`), or when you pass `--backend`/`--model` (or set `LOUPE_BACKEND`/`LOUPE_MODEL`); then it uses the automatic choice above.
+
 ```sh
 npx @arjanj/loupe [map] [repoDir] [options]   # repoDir defaults to the current directory
   --out <file>        write the map somewhere else (relative to the current directory)
   --no-open           don't open the browser (also skipped when CI or LOUPE_NO_OPEN is set, or output isn't a terminal)
   --backend <name>    claude | anthropic | openai, instead of the automatic choice
+  --model <name>      claude: an alias like sonnet, opus or haiku; API backends: a model id like claude-sonnet-5-5
   --verbose           show every model call
 ```
 
@@ -83,7 +106,7 @@ node bin/loupe.mjs manifest examples/bramble/manifest.yaml
 node bin/loupe.mjs render examples/bramble/manifest.tree.json
 ```
 
-`scan` and `relations` accept `--backend` too. Here answers are cached in `.loupe-cache/` next to the output.
+`scan` and `relations` accept `--backend` and `--model` too. Here answers are cached in `.loupe-cache/` next to the output.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
@@ -93,7 +116,7 @@ node bin/loupe.mjs render examples/bramble/manifest.tree.json
 | `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | API base URL, for proxies and gateways |
 | `OPENAI_BASE_URL` | `https://api.openai.com/v1` | API base URL, for proxies and OpenAI-compatible servers |
 | `LOUPE_CLAUDE_BIN` | `claude` | path to the Claude Code CLI |
-| `LOUPE_MODEL` | `claude`: the CLI's default; `anthropic`: `claude-opus-5-5`; `openai`: `gpt-4.1` | model to use |
+| `LOUPE_MODEL` | `claude`: the CLI's default; `anthropic`: `claude-opus-5-5`; `openai`: `gpt-4.1` | model to use; same as `--model` (the flag wins) |
 | `LOUPE_EFFORT` | backend default | `claude`: passed as `--effort`; `anthropic`: `output_config.effort` |
 | `LOUPE_CONCURRENCY` | `6` | parallel model calls |
 | `LOUPE_KEY_FILES` | `12` | files described per module; the rest become "+N more" |

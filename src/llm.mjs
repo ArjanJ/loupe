@@ -3,6 +3,7 @@
 //   anthropic  the Anthropic Messages API (ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL)
 //   openai     the OpenAI Chat Completions API (OPENAI_API_KEY, OPENAI_BASE_URL)
 // Not forced (--backend / LOUPE_BACKEND): the first of claude on PATH, ANTHROPIC_API_KEY, OPENAI_API_KEY.
+// The model is --model / LOUPE_MODEL (validated by validateModel), else the backend's default (DEFAULT_MODEL).
 // Answers are cached as JSON in a directory, keyed by tag + backend + model + prompt hash.
 // API keys never appear in logs or errors: HTTP errors carry the status and a truncated, redacted body.
 import { readFileSync, writeFileSync, lstatSync, statSync, unlinkSync, mkdtempSync, rmSync } from 'node:fs';
@@ -16,7 +17,7 @@ export const BACKENDS = {
   anthropic: 'Anthropic API',
   openai: 'OpenAI API',
 };
-const DEFAULT_MODEL = { claude: '', anthropic: 'claude-opus-5-5', openai: 'gpt-4.1' }; // claude: the CLI's default
+export const DEFAULT_MODEL = { claude: '', anthropic: 'claude-opus-5-5', openai: 'gpt-4.1' }; // claude: the CLI's default
 const TIMEOUT_MS = 5 * 60 * 1000;
 
 export const NO_BACKEND = `Loupe needs a model to describe your code. Pick one:
@@ -69,12 +70,25 @@ export function spawnArgs(bin, args) {
   return [comspec, ['/d', '/s', '/c', `"${line}"`], { windowsVerbatimArguments: true }];
 }
 
+// A model name (--model / LOUPE_MODEL) ends up in `claude --model <name>` argv or an API body: allow only a plain id
+// (no leading `-` that claude could read as a flag, no whitespace or control chars). Returns it or throws BackendError.
+const MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._:\/@\[\]-]*$/;
+export function validateModel(m) {
+  const s = String(m ?? '');
+  if (!s) throw new BackendError('loupe: --model needs a value, e.g. sonnet, opus, claude-sonnet-5-5 or gpt-4.1');
+  if (s.length > 200 || !MODEL_RE.test(s)) throw new BackendError(`loupe: invalid model name ${JSON.stringify(s.slice(0, 60))}${s.length > 60 ? '…' : ''}: use a plain model id or alias (letters, digits and . _ : / @ [ ] -), e.g. sonnet or claude-sonnet-5-5`);
+  return s;
+}
+// the model a backend will use: LOUPE_MODEL (validated) or the backend's default ('' = claude's own default)
+export const modelFor = (name) => (process.env.LOUPE_MODEL ? validateModel(process.env.LOUPE_MODEL) : DEFAULT_MODEL[name]);
+
 // -> { name, label, model, bin? } or throws BackendError with a message fit to show as-is.
 export function resolveBackend(forced = process.env.LOUPE_BACKEND || '') {
   forced = String(forced).trim().toLowerCase();
+  modelFor('claude'); // an invalid LOUPE_MODEL fails first, whichever backend
   if (forced && !Object.hasOwn(BACKENDS, forced)) throw new BackendError(`unknown backend "${forced}": use claude, anthropic or openai`);
   const claudeBin = process.env.LOUPE_CLAUDE_BIN || 'claude';
-  const make = (name, extra = {}) => ({ name, label: BACKENDS[name], model: process.env.LOUPE_MODEL || DEFAULT_MODEL[name], ...extra });
+  const make = (name, extra = {}) => ({ name, label: BACKENDS[name], model: modelFor(name), ...extra });
   if (forced === 'claude') { const bin = findOnPath(claudeBin); if (!bin) throw new BackendError(`--backend claude: \`${claudeBin}\` was not found on PATH. Install Claude Code and sign in (https://docs.anthropic.com/en/docs/claude-code), or set LOUPE_CLAUDE_BIN.`); return make('claude', { bin }); }
   if (forced === 'anthropic') { if (!process.env.ANTHROPIC_API_KEY) throw new BackendError('--backend anthropic: ANTHROPIC_API_KEY is not set.'); return make('anthropic'); }
   if (forced === 'openai') { if (!process.env.OPENAI_API_KEY) throw new BackendError('--backend openai: OPENAI_API_KEY is not set.'); return make('openai'); }
@@ -172,12 +186,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // The backend is resolved on the first call that needs it, so fully cached reruns work without one.
 // LOUPE_QUIET hides the per-call start/done lines (LOUPE_VERBOSE brings them back); failures always show.
 export function createLlm({ cache, log, nollm = false, onFail = 'throw' }) {
+  // a bad LOUPE_MODEL stops the step script up front (bin/loupe.mjs and map.mjs already check it before any work)
+  try { modelFor('claude'); } catch (e) { console.error(e.message); process.exit(2); }
   const CONCURRENCY = Math.max(1, Number(process.env.LOUPE_CONCURRENCY) || 6);
   const chatty = !process.env.LOUPE_QUIET || !!process.env.LOUPE_VERBOSE;
   let backend, backendErr;
   const getBackend = () => { if (backend === undefined && !backendErr) { try { backend = resolveBackend(); } catch (e) { backendErr = e; } } return backend; };
   // no usable backend: look up answers under the forced backend's key if there is one, else claude's
-  const fallback = () => { const f = String(process.env.LOUPE_BACKEND || '').trim().toLowerCase(); const name = Object.hasOwn(BACKENDS, f) ? f : 'claude'; return { name, model: process.env.LOUPE_MODEL || DEFAULT_MODEL[name] }; };
+  const fallback = () => { const f = String(process.env.LOUPE_BACKEND || '').trim().toLowerCase(); const name = Object.hasOwn(BACKENDS, f) ? f : 'claude'; return { name, model: modelFor(name) }; };
   const stats = { cached: 0, fresh: 0, failed: 0 };
   let running = 0; const queue = [];
   const limit = (fn) => new Promise((res, rej) => { queue.push({ fn, res, rej }); pump(); });

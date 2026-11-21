@@ -18,7 +18,7 @@ let failures = 0;
 const check = (ok, what, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if (!ok) { failures++; if (extra) console.log(String(extra).slice(0, 3000)); } };
 
 // ---------- stub HTTP server (Anthropic + OpenAI shapes) ----------
-const seen = { count: 0, auth: [], badKeyRequests: 0 };
+const seen = { count: 0, auth: [], models: [], badKeyRequests: 0 };
 const server = createServer((req, res) => {
   let body = '';
   req.on('data', (d) => (body += d));
@@ -26,6 +26,7 @@ const server = createServer((req, res) => {
     const key = req.headers['x-api-key'] || String(req.headers.authorization || '').replace(/^Bearer /, '');
     if (key.startsWith('sk-bad')) { seen.badKeyRequests++; res.writeHead(401, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ error: { message: `invalid x-api-key: ${key}` } })); }
     seen.count++; seen.auth.push(req.headers['x-api-key'] ? `x-api-key:${key}` : `bearer:${key}`);
+    seen.models.push(JSON.parse(body).model);
     const prompt = JSON.parse(body).messages[0].content;
     const text = JSON.stringify(answer(prompt));
     res.writeHead(200, { 'content-type': 'application/json' });
@@ -58,14 +59,19 @@ function childEnv(extra = {}) {
   for (const [k, v] of Object.entries(process.env)) if (!/^(ANTHROPIC_|OPENAI_|LOUPE_|CLAUDE)/.test(k)) env[k] = v;
   return { ...env, PATH: noClaudeDir, LOUPE_NO_OPEN: '1', CI: '1', ...extra };
 }
-function run(args, env) {
+// keys: written to a piped stdin (null: stdin ignored; "": a piped stdin left open and silent); timeout kills a hang
+function run(args, env, { keys = null, timeout = 60_000 } = {}) {
   return new Promise((res) => {
-    const p = spawn(process.execPath, [BIN, ...args], { env, stdio: ['ignore', 'pipe', 'pipe'] });
-    let out = '', err = '';
+    const p = spawn(process.execPath, [BIN, ...args], { env, stdio: [keys === null ? 'ignore' : 'pipe', 'pipe', 'pipe'] });
+    let out = '', err = '', hung = false;
+    const t = setTimeout(() => { hung = true; p.kill(); }, timeout);
+    if (keys !== null && keys !== '') p.stdin.write(keys); // '' keeps stdin open and silent
     p.stdout.on('data', (d) => (out += d)); p.stderr.on('data', (d) => (err += d));
-    p.on('close', (code) => res({ code, out, err, all: out + err }));
+    p.on('close', (code) => { clearTimeout(t); res({ code, out, err, all: out + err, hung }); });
   });
 }
+const claudeCalls = () => (existsSync(fakeClaudeLog) ? readFileSync(fakeClaudeLog, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
+const modelArg = (c) => { const i = c.argv.indexOf('--model'); return i < 0 ? null : c.argv[i + 1]; };
 function fixture(name) {
   const dir = join(TMP, name); mkdirSync(join(dir, 'src'), { recursive: true });
   writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'fixture-app', version: '1.0.0', type: 'module' }));
@@ -97,7 +103,7 @@ function checkMap(dir, r, what) {
 try {
   // help / version / argument errors
   let r = await run(['--help'], childEnv());
-  check(r.code === 0 && ['map', '--out', '--no-open', '--backend', '--verbose'].every((s) => r.out.includes(s)), '--help lists map and its flags', r.all);
+  check(r.code === 0 && ['map', '--out', '--no-open', '--backend', '--model', '--verbose'].every((s) => r.out.includes(s)), '--help lists map and its flags', r.all);
   r = await run(['--version'], childEnv());
   check(r.code === 0 && /^\d+\.\d+\.\d+/.test(r.out.trim()), '--version');
 
@@ -147,14 +153,126 @@ try {
   const before = seen.count;
   r = await run(['map', cl, '--no-open'], childEnv({ PATH: [fakeClaudeDir, noClaudeDir].join(delimiter), ANTHROPIC_API_KEY: KEY, ANTHROPIC_BASE_URL: BASE }));
   checkMap(cl, r, 'claude');
-  check(r.out.includes('backend: claude'), 'claude: auto-selected over ANTHROPIC_API_KEY', r.out);
+  check(r.out.includes('backend: claude (Claude Code CLI, default model)'), 'claude: auto-selected over ANTHROPIC_API_KEY, default model', r.out);
   check(seen.count === before, 'claude: no HTTP requests');
-  const calls = existsSync(fakeClaudeLog) ? readFileSync(fakeClaudeLog, 'utf8').trim().split('\n').map((l) => JSON.parse(l)) : [];
+  const calls = claudeCalls();
   check(calls.length > 0 && calls.every((c) => JSON.stringify(c.argv) === JSON.stringify(['-p', '--tools', '', '--output-format', 'text'])), 'claude: CLI called headless with tools off', JSON.stringify(calls[0]));
   // the repo could plant .claude/settings.json (hooks) or CLAUDE.md: claude must never run inside it
   check(calls.length > 0 && calls.every((c) => !c.cwd.startsWith(cl)), 'claude: runs outside the repo', JSON.stringify(calls[0]));
   const tree = JSON.parse(readFileSync(join(cl, '.loupe', 'tree.json'), 'utf8'));
   check(!JSON.stringify(tree).includes('test/spec.js'), 'top-level test/ is not mapped as source');
+
+  // ---------- --model / LOUPE_MODEL ----------
+  const clEnv = (extra = {}) => childEnv({ PATH: [fakeClaudeDir, noClaudeDir].join(delimiter), ANTHROPIC_API_KEY: KEY, ANTHROPIC_BASE_URL: BASE, OPENAI_API_KEY: KEY, OPENAI_BASE_URL: `${BASE}/v1`, ...extra });
+  let n0 = claudeCalls().length, h0 = seen.count;
+  r = await run(['map', cl, '--no-open', '--model', 'sonnet'], clEnv());
+  let fresh = claudeCalls().slice(n0);
+  check(r.code === 0 && r.out.includes('backend: claude (Claude Code CLI, model sonnet)'), 'claude --model: backend line shows the model', r.all);
+  check(fresh.length > 0 && fresh.every((c) => modelArg(c) === 'sonnet' && c.argv[0] === '-p'), 'claude --model: a new model misses the cache, CLI gets --model sonnet', JSON.stringify(fresh[0]));
+  n0 = claudeCalls().length;
+  r = await run(['map', cl, '--no-open', '--model=sonnet'], clEnv());
+  check(r.code === 0 && claudeCalls().length === n0, 'claude --model=sonnet again: served from the cache', r.all);
+  r = await run(['map', cl, '--no-open'], clEnv());
+  check(r.code === 0 && claudeCalls().length === n0 && /0 new/.test(r.err), 'claude default model: still its own cache entries', r.all);
+  r = await run(['map', cl, '--no-open'], clEnv({ LOUPE_MODEL: 'haiku' }));
+  fresh = claudeCalls().slice(n0);
+  check(r.code === 0 && r.out.includes('model haiku') && fresh.length > 0 && fresh.every((c) => modelArg(c) === 'haiku'), 'LOUPE_MODEL alone reaches claude', JSON.stringify(fresh[0]) + r.all);
+  n0 = claudeCalls().length;
+  r = await run(['map', cl, '--no-open', '--model', 'opus'], clEnv({ LOUPE_MODEL: 'haiku' }));
+  fresh = claudeCalls().slice(n0);
+  check(r.code === 0 && r.out.includes('model opus') && fresh.length > 0 && fresh.every((c) => modelArg(c) === 'opus'), '--model wins over LOUPE_MODEL', JSON.stringify(fresh[0]) + r.all);
+  check(seen.count === h0, 'claude --model runs: no HTTP requests');
+
+  // API backends: body.model is the flag, else the unchanged default
+  const anM = fixture('anthropic-model');
+  seen.models = [];
+  r = await run(['map', anM, '--no-open', '--backend', 'anthropic'], clEnv());
+  check(r.code === 0 && r.out.includes('backend: anthropic (Anthropic API, model claude-opus-5-5)') && seen.models.length > 0 && seen.models.every((m) => m === 'claude-opus-5-5'), 'anthropic default model in body + backend line', seen.models.join(' ') + r.all);
+  seen.models = [];
+  r = await run(['map', anM, '--no-open', '--backend', 'anthropic', '--model', 'claude-haiku-5-5'], clEnv());
+  check(r.code === 0 && r.out.includes('model claude-haiku-5-5') && seen.models.length > 0 && seen.models.every((m) => m === 'claude-haiku-5-5'), 'anthropic --model: body.model, new requests', seen.models.join(' ') + r.all);
+  seen.models = [];
+  r = await run(['map', anM, '--no-open', '--backend=openai', '--model=gpt-6-luna'], clEnv());
+  check(r.code === 0 && r.out.includes('backend: openai (OpenAI API, model gpt-6-luna)') && seen.models.length > 0 && seen.models.every((m) => m === 'gpt-6-luna'), 'openai --model: body.model', seen.models.join(' ') + r.all);
+  seen.models = [];
+  r = await run(['map', anM, '--no-open', '--backend=openai', '--model=gpt-6-luna'], clEnv());
+  check(r.code === 0 && seen.models.length === 0, 'openai --model again: cache hit', r.all);
+
+  // rejected model names: exit 2, nothing spawned, no request, nothing written
+  const rej = fixture('reject-model');
+  for (const [args, extra, what] of [
+    [['--model', '-x'], {}, '--model -x'],
+    [['--model=--dangerously-skip-permissions'], {}, '--model=--dangerously-skip-permissions'],
+    [['--model', ''], {}, "--model ''"],
+    [['--model='], {}, '--model='],
+    [['--model'], {}, '--model without a value'],
+    [[], { LOUPE_MODEL: 'a b' }, "LOUPE_MODEL='a b'"],
+    [[], { LOUPE_MODEL: 'x'.repeat(201) }, 'LOUPE_MODEL too long'],
+    [['--backend', 'anthropic', '--model', 'claude\nopus'], {}, 'a newline in --model'],
+  ]) {
+    n0 = claudeCalls().length; h0 = seen.count;
+    r = await run(['map', rej, '--no-open', ...args], clEnv(extra));
+    check(r.code === 2 && /model/.test(r.err) && claudeCalls().length === n0 && seen.count === h0 && !existsSync(join(rej, '.loupe')), `${what}: rejected with exit 2 before any work`, r.all);
+  }
+  for (const args of [['scan', rej, join(TMP, 'rej.tree.json'), '--model=-x'], ['scan', rej, join(TMP, 'rej.tree.json'), '--model'], ['relations', rej, join(TMP, 'rej.tree.json'), '--model', 'a;b']]) {
+    n0 = claudeCalls().length;
+    r = await run(args, clEnv());
+    check(r.code === 2 && /model/.test(r.err) && claudeCalls().length === n0 && !existsSync(join(TMP, 'rej.tree.json')), `${args[0]} ${args.slice(3).join(' ')}: rejected with exit 2`, r.all);
+  }
+  r = await run(['scan', rej, join(TMP, 'rej.tree.json')], clEnv({ LOUPE_MODEL: '-p' }));
+  check(r.code === 2 && claudeCalls().length === n0, "scan with LOUPE_MODEL='-p': rejected", r.all);
+
+  // ---------- the picker: never without a terminal; LOUPE_FORCE_TTY drives it through a pipe ----------
+  const pk = fixture('picker');
+  n0 = claudeCalls().length;
+  r = await run(['map', pk, '--no-open'], clEnv({ CI: '' }), { keys: '', timeout: 30_000 });
+  check(r.code === 0 && !r.hung && !r.all.includes('Which model') && r.out.includes('backend: claude (Claude Code CLI, default model)'), 'piped stdio, no flags: no prompt, automatic choice', r.all);
+  check(!existsSync(join(pk, '.loupe', 'config.json')), 'non-interactive run writes no config.json');
+  writeFileSync(join(pk, '.loupe', 'config.json'), JSON.stringify({ backend: 'openai', model: 'gpt-6-luna' }));
+  seen.models = [];
+  r = await run(['map', pk, '--no-open'], clEnv({ CI: '' }), { keys: '' , timeout: 30_000 });
+  check(r.code === 0 && seen.models.length === 0 && r.out.includes('default model'), 'non-interactive run ignores config.json', r.all);
+  rmSync(join(pk, '.loupe', 'config.json'));
+
+  const ttyEnv = clEnv({ LOUPE_FORCE_TTY: '1', NO_COLOR: '1' });
+  n0 = claudeCalls().length;
+  r = await run(['map', pk, '--no-open'], ttyEnv, { keys: '\x1b[B\r', timeout: 30_000 });
+  fresh = claudeCalls().slice(n0);
+  check(r.code === 0 && r.out.includes('Which model') && r.out.includes('Claude Code · your subscription') && r.out.includes('OpenAI API · OPENAI_API_KEY') && r.out.includes('✓ Model  Claude Code · Sonnet'), 'picker: shown, down + enter picks Sonnet', r.all);
+  check(r.out.includes('backend: claude (Claude Code CLI, model sonnet)') && fresh.length > 0 && fresh.every((c) => modelArg(c) === 'sonnet'), 'picker: choice reaches the claude CLI', JSON.stringify(fresh[0]) + r.out);
+  check(!/\x1b\[[0-9;]*m/.test(r.out), 'picker: NO_COLOR writes no colour codes');
+  let cfg = null; try { cfg = JSON.parse(readFileSync(join(pk, '.loupe', 'config.json'), 'utf8')); } catch {}
+  check(cfg?.backend === 'claude' && cfg?.model === 'sonnet', 'picker: remembers the choice in .loupe/config.json', JSON.stringify(cfg));
+  r = await run(['map', pk, '--no-open'], ttyEnv, { keys: '\r', timeout: 30_000 });
+  check(r.code === 0 && r.out.includes('✓ Model  Claude Code · Sonnet') && r.out.includes('model sonnet'), 'picker: remembered choice is preselected', r.all);
+  seen.models = [];
+  r = await run(['map', pk, '--no-open'], ttyEnv, { keys: '\x1b[A\r', timeout: 30_000 }); // Sonnet -> up -> Default
+  check(r.code === 0 && r.out.includes('✓ Model  Claude Code · Default') && r.out.includes('default model') && JSON.parse(readFileSync(join(pk, '.loupe', 'config.json'), 'utf8')).model === '', 'picker: Default claude passes no model', r.all);
+  writeFileSync(join(pk, '.loupe', 'config.json'), JSON.stringify({ backend: 'claude', model: '--dangerously-skip-permissions' }));
+  n0 = claudeCalls().length;
+  r = await run(['map', pk, '--no-open'], ttyEnv, { keys: '\r', timeout: 30_000 });
+  check(r.code === 0 && r.out.includes('✓ Model  Claude Code · Default') && claudeCalls().slice(n0).every((c) => !c.argv.includes('--dangerously-skip-permissions')), 'picker: a tampered config.json is ignored', r.all);
+  for (const [content, what] of [['{not json', 'malformed'], [JSON.stringify({ backend: 'claude', model: 'sonnet', pad: 'x'.repeat(10_000) }), 'huge'], ['{"__proto__": {"backend": "claude", "model": "sonnet"}}', '__proto__']]) {
+    writeFileSync(join(pk, '.loupe', 'config.json'), content);
+    r = await run(['map', pk, '--no-open'], ttyEnv, { keys: '\r', timeout: 30_000 });
+    check(r.code === 0 && r.out.includes('✓ Model  Claude Code · Default'), `picker: a ${what} config.json is ignored`, r.all);
+  }
+  const keep = join(TMP, 'keep.json'); writeFileSync(keep, 'keep');
+  rmSync(join(pk, '.loupe', 'config.json')); symlinkSync(keep, join(pk, '.loupe', 'config.json'));
+  r = await run(['map', pk, '--no-open'], ttyEnv, { keys: '\x1b[B\r', timeout: 30_000 });
+  check(r.code === 2 && r.all.includes('refusing') && readFileSync(keep, 'utf8') === 'keep', 'picker: a config.json symlink is refused, not written through', r.all);
+  rmSync(join(pk, '.loupe', 'config.json'));
+  n0 = claudeCalls().length; h0 = seen.count;
+  r = await run(['map', pk, '--no-open'], ttyEnv, { keys: '\x1b[B\x03', timeout: 30_000 });
+  check(r.code === 130 && r.out.includes('cancelled') && !r.all.includes('at ') && !r.out.includes('[1/3]') && claudeCalls().length === n0 && seen.count === h0, 'picker: ctrl-c exits 130, no work, no stack trace', r.all);
+  r = await run(['map', pk, '--no-open'], ttyEnv, { keys: '\x1b', timeout: 30_000 });
+  check(r.code === 130 && r.out.includes('cancelled') && !r.out.includes('[1/3]'), 'picker: esc cancels', r.all);
+  for (const [extra, args, what] of [[{}, ['--model', 'haiku'], '--model'], [{}, ['--backend', 'claude'], '--backend'], [{ LOUPE_MODEL: 'haiku' }, [], 'LOUPE_MODEL'], [{ LOUPE_BACKEND: 'claude' }, [], 'LOUPE_BACKEND']]) {
+    r = await run(['map', pk, '--no-open', ...args], { ...ttyEnv, ...extra }, { keys: '', timeout: 30_000 });
+    check(r.code === 0 && !r.hung && !r.out.includes('Which model'), `picker: not shown with ${what}`, r.all);
+  }
+  r = await run(['map', pk, '--no-open'], { ...ttyEnv, PATH: noClaudeDir, OPENAI_API_KEY: '' }, { keys: '\x1b[B\r', timeout: 30_000 });
+  check(r.code === 0 && r.out.includes('✓ Model  Anthropic API · claude-haiku-5-5') && r.out.includes('model claude-haiku-5-5'), 'picker: API-only options start at the backend default', r.all);
 
   // a hostile repo: committed symlinks for .loupe/, .loupe/cache, .loupe/tree.json or architecture.html are refused
   const victim = join(TMP, 'victim'); mkdirSync(victim); writeFileSync(join(victim, 'precious'), 'keep');
@@ -180,6 +298,15 @@ try {
   check(r.code === 0 && existsSync(treePath) && existsSync(join(TMP, 'steps-out', '.loupe-cache')), 'scan subcommand (cache next to output)', r.all);
   r = await run(['relations', st, treePath, '--backend=openai'], stEnv);
   check(r.code === 0, 'relations subcommand', r.all);
+  seen.models = [];
+  r = await run(['scan', st, treePath, '--backend', 'openai', '--model', 'gpt-6.2-sol'], stEnv);
+  check(r.code === 0 && seen.models.length > 0 && seen.models.every((m) => m === 'gpt-6.2-sol'), 'scan --model reaches the API', seen.models.join(' ') + r.all);
+  seen.models = [];
+  r = await run(['relations', st, treePath, '--backend=openai', '--model=gpt-6.2-sol'], { ...stEnv, LOUPE_MODEL: 'gpt-4.1' });
+  check(r.code === 0 && seen.models.length > 0 && seen.models.every((m) => m === 'gpt-6.2-sol'), 'relations --model reaches the API, over LOUPE_MODEL', seen.models.join(' ') + r.all);
+  const n1 = claudeCalls().length;
+  r = await run(['relations', st, treePath, '--model', 'haiku'], { ...stEnv, PATH: [fakeClaudeDir, noClaudeDir].join(delimiter) });
+  check(r.code === 0 && claudeCalls().length > n1 && claudeCalls().slice(n1).every((c) => modelArg(c) === 'haiku'), 'relations --model reaches the claude CLI', r.all);
   r = await run(['render', treePath], stEnv);
   check(r.code === 0 && existsSync(join(TMP, 'steps-out', 'steps.html')), 'render subcommand', r.all);
 } finally {
