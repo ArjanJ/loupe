@@ -516,12 +516,18 @@ try {
       mkdirSync(dirname(full), { recursive: true });
       writeFileSync(full, content);
     };
-    // Real source files that must be mapped
+    // Real source files that must be mapped (including nested build/out/target/coverage/vendors)
     write('cmd/main.go', 'package main\nfunc Main() {}\n');
     write('internal/app/app.go', 'package app\nfunc Run() {}\n');
     write('other/gen/handwritten.go', 'package gen\nfunc Handwritten() {}\n'); // gen/ without *.pb.* is kept
+    write('src/build/index.ts', 'export const buildIndex = 1;\n');
+    write('lib/out/writer.js', 'export const writeOut = () => {};\n');
+    write('src/target/aim.ts', 'export const aim = 1;\n');
+    write('src/coverage/plan.ts', 'export const plan = 1;\n');
+    write('src/vendors/list.ts', 'export const vendorList = [];\n');
     // Default excluded directories
     write('vendor/github.com/foo/bar/f1.go', 'package bar\nfunc F1() {}\n');
+    write('src/vendor/dep.js', 'export const sv = 1;\n'); // vendor/ still skipped at any depth
     write('vendors/lib/v.js', 'export const v = 1;\n');
     write('third_party/lib/f1.c', 'int f1(void){return 0;}\n');
     write('third-party/lib/f2.h', 'int f2(void);\n');
@@ -529,10 +535,12 @@ try {
     write('Carthage/Checkouts/x.swift', 'func carthage() {}\n');
     write('bower_components/pkg/a.js', 'export const a = 1;\n');
     write('node_modules/pkg/index.js', 'export const n = 1;\n');
+    write('build/app.js', 'export const bRoot = 1;\n');
     write('build/gen/x1_pb2.py', 'def x(): pass\n');
     write('out/app.js', 'export const o = 1;\n');
     write('target/debug/x1.rs', 'pub fn x() {}\n');
     write('dist/index.js', 'export const d = 1;\n');
+    write('src/dist/nested.js', 'export const dn = 1;\n'); // dist/ still skipped at any depth
     write('.next/server.js', 'export const nx = 1;\n');
     write('.nuxt/app.js', 'export const nu = 1;\n');
     write('.svelte-kit/out.js', 'export const sk = 1;\n');
@@ -564,6 +572,7 @@ try {
     write('src/attr_nodiff.ts', 'export const an = 1;\n');
     write('src/attr_bin.ts', 'export const ab = 1;\n');
     write('vendor/keep_me.go', 'package keep\nfunc Keep() {}\n');
+    write('build/keep_build.js', 'export const keptBuild = 1;\n');
     write('src/keep_me.generated.ts', 'export const keptGen = 1;\n');
     write('src/keep_minified.js', 'var k=function(x){return x+1};'.repeat(30) + '\n');
     write('.gitattributes', [
@@ -572,6 +581,7 @@ try {
       'src/attr_nodiff.ts -diff',
       'src/attr_bin.ts binary',
       'vendor/keep_me.go linguist-vendored=false',
+      'build/keep_build.js linguist-generated=false',
       'src/keep_me.generated.ts linguist-generated=false',
       'src/keep_minified.js linguist-generated=false',
     ].join('\n') + '\n');
@@ -584,9 +594,70 @@ try {
 
     r = await run(['map', vend, '--no-open', '--backend', 'openai'], stEnv);
     const vendFiles = existsSync(join(vend, '.loupe', 'tree.files.json')) ? Object.keys(JSON.parse(readFileSync(join(vend, '.loupe', 'tree.files.json'), 'utf8'))).sort() : [];
-    const expectedKept = ['cmd/main.go', 'internal/app/app.go', 'other/gen/handwritten.go', 'src/keep_me.generated.ts', 'src/keep_minified.js', 'vendor/keep_me.go'];
+    const expectedKept = [
+      'build/keep_build.js',
+      'cmd/main.go',
+      'internal/app/app.go',
+      'lib/out/writer.js',
+      'other/gen/handwritten.go',
+      'src/build/index.ts',
+      'src/coverage/plan.ts',
+      'src/keep_me.generated.ts',
+      'src/keep_minified.js',
+      'src/target/aim.ts',
+      'src/vendors/list.ts',
+      'vendor/keep_me.go',
+    ];
     check(r.code === 0 && JSON.stringify(vendFiles) === JSON.stringify(expectedKept), 'scan quality: excludes vendored/build/generated/ignored/minified/gitattributes files and honours re-include', JSON.stringify({ vendFiles, expectedKept }) + '\n' + r.all);
     check(/skipped \d+ vendored\/generated files \(see \.gitattributes to include\)/.test(r.err), 'scan quality: logs skipped vendored/generated count without --verbose', r.err);
+
+    // Workspace monorepo: output dirs anchored to package roots (keep packages/x/src/build/foo.ts, skip packages/x/build/)
+    const ws = join(TMP, 'ws-anchored-repo');
+    const writeWs = (rel, content) => {
+      const full = join(ws, rel);
+      mkdirSync(dirname(full), { recursive: true });
+      writeFileSync(full, content);
+    };
+    writeWs('package.json', JSON.stringify({ name: 'ws-anchored', private: true, workspaces: ['packages/*', 'packages/angular/build'] }));
+    writeWs('packages/x/package.json', JSON.stringify({ name: '@ws/x', version: '1.0.0', type: 'module' }));
+    writeWs('packages/x/src/index.ts', `import { runBuild } from './build/foo';\nexport const out = runBuild();\n`);
+    writeWs('packages/x/src/build/foo.ts', `export function runBuild() {\n  return fetch('https://hooks.slack.com/services/T0/B0/XYZ');\n}\n`);
+    writeWs('packages/x/build/compiled.js', `export function leaked() { return fetch('https://api.github.com/repos/org/app'); }\n`);
+    writeWs('packages/x/build/keep_me.js', `export const keptPkgBuild = 1;\n`);
+    writeWs('packages/x/out/app.js', `export const o = 1;\n`);
+    writeWs('packages/x/target/debug.rs', `pub fn d() {}\n`);
+    writeWs('packages/x/coverage/lcov.js', `export const cv = 1;\n`);
+    writeWs('packages/x/vendors/dep.js', `export const v = 1;\n`);
+    writeWs('packages/angular/build/package.json', JSON.stringify({ name: '@angular/build', version: '1.0.0', type: 'module' }));
+    writeWs('packages/angular/build/src/index.ts', `export const ngBuild = 1;\n`);
+    writeWs('packages/angular/build/build/out.js', `export const ngOut = 1;\n`);
+    writeWs('.gitattributes', 'packages/x/build/keep_me.js linguist-generated=false\n');
+    const gws = (...a) => execFileSync(gitBin, a, { cwd: ws, stdio: 'pipe' });
+    gws('init', '-q');
+    gws('add', '-A');
+    gws('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'init');
+
+    r = await run(['map', ws, '--no-open', '--backend', 'openai'], stEnv);
+    const wsFilesPath = join(ws, '.loupe', 'tree.files.json');
+    const wsTreePath = join(ws, '.loupe', 'tree.json');
+    const wsFiles = existsSync(wsFilesPath) ? Object.keys(JSON.parse(readFileSync(wsFilesPath, 'utf8'))).sort() : [];
+    const expectedWsKept = [
+      'packages/angular/build/src/index.ts',
+      'packages/x/build/keep_me.js',
+      'packages/x/src/build/foo.ts',
+      'packages/x/src/index.ts',
+    ];
+    check(r.code === 0 && JSON.stringify(wsFiles) === JSON.stringify(expectedWsKept), 'scan quality (workspace): keeps packages/x/src/build/foo.ts and packages/angular/build/src/, skips packages/x/build/ unless re-included', JSON.stringify({ wsFiles, expectedWsKept }) + '\n' + r.all);
+
+    // relations.mjs agrees with generate.mjs on workspace-anchored output dirs
+    const wsMap = JSON.parse(readFileSync(wsFilesPath, 'utf8'));
+    wsMap['packages/x/build/compiled.js'] = wsMap['packages/x/src/index.ts'];
+    writeFileSync(wsFilesPath, JSON.stringify(wsMap, null, 1));
+    r = await run(['relations', ws, wsTreePath, '--backend', 'openai'], { ...stEnv, LOUPE_NOLLM: '1' });
+    const wsRels = existsSync(wsTreePath) ? JSON.parse(readFileSync(wsTreePath, 'utf8')).root.relations : [];
+    const wsHasSlack = wsRels.some((x) => x.kind === 'external' && x.to === 'ext:slack');
+    const wsHasGithub = wsRels.some((x) => x.to === 'ext:github');
+    check(r.code === 0 && wsHasSlack && !wsHasGithub, 'scan quality (workspace): relations.mjs keeps packages/x/src/build/foo.ts and skips packages/x/build/', JSON.stringify(wsRels) + '\n' + r.all);
   }
 
   // ---------- JS/TS private class fields are not treated as # comments ----------

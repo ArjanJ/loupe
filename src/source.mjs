@@ -3,7 +3,22 @@ export const SRC_EXT = /\.(ts|tsx|mts|cts|js|mjs|cjs|jsx|sql|prisma|py|go|rs|rb|
 export const JS_TS_EXT = /\.(ts|tsx|mts|cts|js|mjs|cjs|jsx|vue|svelte)$/;
 export const SECRET_FILE = /(^|\/)\.env|secret|credential|\.pem$|private[-_]?key/i;
 export const EXCLUDE = /(\.test\.|\.spec\.|_test\.(go|py|rb|rs)$|(^|\/)test_[^/]+\.py$|(^|\/)__tests__\/|(^|\/)tests?\/|(^|\/)test-d\/|test-support|\.d\.m?ts$|(^|\/)migrations\/|(^|\/)fixtures?\/|(^|\/)docs\/conf\.py$)/;
-export const VENDOR_GEN_EXCLUDE = /((^|\/)(vendor|vendors|third_party|third-party|Pods|Carthage|bower_components|node_modules|build|out|target|dist|\.next|\.nuxt|\.svelte-kit|coverage|generated|__generated__)\/|\.min\.(js|css)$|\.bundle\.js$|\.pb(\.gw)?\.go$|_pb2(_grpc)?\.py$|\.generated\.[^/]+$|\.g\.dart$|\.[Dd]esigner\.cs$)/;
+export const VENDOR_GEN_EXCLUDE = /((^|\/)(vendor|third_party|third-party|Pods|Carthage|bower_components|node_modules|dist|\.next|\.nuxt|\.svelte-kit|generated|__generated__)\/|\.min\.(js|css)$|\.bundle\.js$|\.pb(\.gw)?\.go$|_pb2(_grpc)?\.py$|\.generated\.[^/]+$|\.g\.dart$|\.[Dd]esigner\.cs$)/;
+export const ROOT_OUTPUT_DIR = /^(build|out|target|coverage|vendors)\//;
+
+// Match build/out/target/coverage/vendors only at the repo root or directly under a workspace package root.
+export function anchoredOutputMatcher(pkgDirs = []) {
+  const roots = [...new Set(
+    pkgDirs
+      .map((d) => String(d || '').replace(/^\.\/+/, '').replace(/\/+$/, ''))
+      .filter((d) => d && d !== '.')
+      .map((d) => `${d}/`),
+  )].sort((a, b) => b.length - a.length);
+  return (p) => {
+    const pre = roots.find((r) => p.startsWith(r));
+    return ROOT_OUTPUT_DIR.test(pre ? p.slice(pre.length) : p);
+  };
+}
 
 // Any `gen/` directory (at any depth) that contains protobuf files (`*.pb.*`).
 export function protoGenDirs(paths) {
@@ -33,7 +48,7 @@ export function isMinified(text) {
 //   - tracked files matching .gitignore (`git ls-files -z -ci --exclude-standard`)
 //   - .gitattributes (`linguist-vendored`, `linguist-generated`, `-diff`, `binary`) in one batched `check-attr` call
 //   - default vendored/build/generated path patterns (overridden by linguist-vendored=false / linguist-generated=false)
-export function gitSourceFilters(repo, candidatePaths, gitFn, allGitPaths = candidatePaths) {
+export function gitSourceFilters(repo, candidatePaths, gitFn, allGitPaths = candidatePaths, pkgDirs = []) {
   const ignored = new Set();
   try {
     const out = gitFn(repo, ['ls-files', '-z', '-ci', '--exclude-standard'], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
@@ -68,6 +83,7 @@ export function gitSourceFilters(repo, candidatePaths, gitFn, allGitPaths = cand
   }
 
   const genDirs = [...protoGenDirs(allGitPaths)];
+  const isAnchoredOutput = anchoredOutputMatcher(pkgDirs);
   const isIncludedByAttr = (p) => !!attrs.get(p)?.included;
   const isSkippedPath = (p) => {
     const a = attrs.get(p);
@@ -75,6 +91,7 @@ export function gitSourceFilters(repo, candidatePaths, gitFn, allGitPaths = cand
     if (a?.included) return false;
     if (ignored.has(p)) return true;
     if (VENDOR_GEN_EXCLUDE.test(p)) return true;
+    if (isAnchoredOutput(p)) return true;
     if (genDirs.length && genDirs.some((d) => p.startsWith(d))) return true;
     return false;
   };

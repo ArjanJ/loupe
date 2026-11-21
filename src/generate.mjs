@@ -79,7 +79,7 @@ for (const pkg of packages) {
   pkg.files = [];
 }
 const candidates = [...pkgOwner.keys()].filter((f) => SRC_EXT.test(f) && !EXCLUDE.test(f) && !SECRET_FILE.test(f) && !(IGNORE && IGNORE.test(f)) && isRegularFile(f));
-const filters = gitSourceFilters(REPO, candidates, git, gitFiles);
+const filters = gitSourceFilters(REPO, candidates, git, gitFiles, packages.map((p) => p.dir));
 let skippedVendored = 0;
 const files = new Map(); // path -> info
 for (const f of candidates) {

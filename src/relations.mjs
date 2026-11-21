@@ -59,7 +59,8 @@ const files = new Map(); // path -> { text, lines, node, pkg }
 const wsDirs = root.children.map((c) => c.path).filter((p) => p && p !== '.').sort((a, b) => b.length - a.length);
 const pkgOf = (f) => wsDirs.find((d) => f.startsWith(d + '/')) || '.';
 const mapEntries = Object.entries(fileMap).filter(([f]) => SRC_EXT.test(f) && !SECRET_FILE.test(f) && !(IGNORE && IGNORE.test(f)));
-const filters = gitSourceFilters(REPO, mapEntries.map(([f]) => f), git);
+const mapPaths = mapEntries.map(([f]) => f);
+const filters = gitSourceFilters(REPO, mapPaths, git, mapPaths, wsDirs);
 for (const [f, node] of mapEntries) {
   if (filters.isSkippedPath(f)) continue;
   const text = readRepo(f); if (!text) continue;
