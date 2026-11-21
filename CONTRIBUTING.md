@@ -4,7 +4,7 @@ Thanks for your interest in contributing to Loupe.
 
 ## Local setup
 
-Requirements: Node 18+ and `git`.
+Requirements: `git`, and Node 20+ to run the full test suite (Playwright needs 20+). Loupe itself runs on Node 18+.
 
 ```sh
 git clone https://github.com/ArjanJ/loupe.git
@@ -37,7 +37,7 @@ If Playwright is installed in another directory, point `PLAYWRIGHT_DIR=/path/to/
 
 ## CI workflow
 
-A ready-to-enable GitHub Actions CI workflow lives at [`scripts/ci-workflow.yml`](scripts/ci-workflow.yml) (parked outside `.github/workflows/` until enabled). It runs `npm ci`, `npx playwright install --with-deps chromium`, and `npm test` across Node 18, 20, and 22.
+A ready-to-enable GitHub Actions CI workflow lives at [`scripts/ci-workflow.yml`](scripts/ci-workflow.yml) (parked outside `.github/workflows/` until enabled). It runs `npm ci`, `npx playwright install --with-deps chromium`, and `npm test` across Node 20, 22 and 24, plus the browser-free tests (`test/pipeline.mjs`, `test/picker.mjs`) on Node 18.
 
 ## Pull requests
 
