@@ -4,9 +4,10 @@
 // A manifest describes a system that spans many repos: services, datastores, external systems, shared libraries,
 // typed calls between them and end-to-end flows, each with a lifecycle status and an optional confidence.
 // See docs/manifest.md for the schema. Every relation keeps the manifest line it came from as its evidence.
-import { readFileSync, writeFileSync, existsSync, realpathSync, statSync } from 'node:fs';
+import { readFileSync, existsSync, realpathSync, statSync } from 'node:fs';
 import { resolve, dirname, basename, relative, isAbsolute } from 'node:path';
 import { parseDocument, LineCounter, isMap, isSeq } from 'yaml';
+import { safeWriteFile, SafeFsError } from './fs-safe.mjs';
 
 const args = process.argv.slice(2);
 const strict = args.includes('--strict');
@@ -317,5 +318,6 @@ const meta = { source: `system manifest ${SRC}`, generatedAt: new Date().toISOSt
 for (const w of warnings) console.error(`warning: ${w}`);
 for (const e of errors) console.error(`error: ${e}`);
 if (errors.length && strict) process.exit(1);
-writeFileSync(OUT, JSON.stringify({ meta, root }, null, 2));
+try { safeWriteFile(OUT, JSON.stringify({ meta, root }, null, 2)); }
+catch (e) { if (e instanceof SafeFsError) { console.error(`loupe: ${e.message}`); process.exit(2); } throw e; }
 console.log(`wrote ${OUT} (${nodeCount} nodes, ${root.relations.length} relations, ${root.flows.length} flows; ${errors.length} errors, ${warnings.length} warnings)`);

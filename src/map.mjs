@@ -5,12 +5,13 @@
 // and remembers the answer in <repoDir>/.loupe/config.json as the next run's preselection.
 // Output: <repoDir>/architecture.html (or --out, relative to cwd). Intermediate files live in <repoDir>/.loupe/:
 // tree.json + tree.files.json, and the answer cache in .loupe/cache/ (LOUPE_CACHE overrides). .loupe/ ignores itself.
-import { existsSync, mkdirSync, writeFileSync, statSync, lstatSync, readFileSync, realpathSync, openSync, fstatSync, closeSync, constants as fsc } from 'node:fs';
+import { existsSync, statSync, readFileSync, openSync, fstatSync, closeSync, constants as fsc } from 'node:fs';
 import { join, resolve, relative, dirname, isAbsolute } from 'node:path';
 import { spawnSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { resolveBackend, BackendError, findOnPath, git, validateModel } from './llm.mjs';
+import { resolveBackend, BackendError, findOnPath, git, validateModel, validateEffort, hasTrackedFiles } from './llm.mjs';
 import { detectOptions, initialIndex, pick } from './picker.mjs';
+import { SafeFsError, within, lst, assertSafeFile, checkSafePath, safeDir, safeWriteFile } from './fs-safe.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fail = (msg, code = 1) => { console.error(`loupe: ${msg}`); process.exit(code); };
@@ -31,9 +32,10 @@ for (let i = 0; i < argv.length; i++) {
   else if (!opts.repo) opts.repo = a;
   else fail(`unexpected argument ${a} (see loupe --help)`, 2);
 }
-// the flag wins over LOUPE_MODEL; either way a bad name stops here, before any work and long before any spawn
+// the flag wins over LOUPE_MODEL; either way a bad name or effort stops here, before any work and long before any spawn
 if (opts.model) process.env.LOUPE_MODEL = opts.model;
 if (process.env.LOUPE_MODEL) try { validateModel(process.env.LOUPE_MODEL); } catch (e) { fail(e.message.replace(/^loupe: /, ''), 2); }
+if (process.env.LOUPE_EFFORT) try { validateEffort(process.env.LOUPE_EFFORT); } catch (e) { fail(e.message.replace(/^loupe: /, ''), 2); }
 const REPO = resolve(opts.repo || '.');
 const OUT = resolve(opts.out || join(REPO, 'architecture.html'));
 const WORK = join(REPO, '.loupe');
@@ -47,23 +49,12 @@ catch (e) { fail(e.code === 'ENOENT' ? 'git is not installed: Loupe lists your s
 try { git(REPO, ['rev-parse', '--verify', 'HEAD'], { stdio: 'pipe' }); }
 catch { fail(`${REPO} has no commits yet: commit your files first (Loupe records the commit it mapped).`, 2); }
 
-// The repo is untrusted: it may commit `.loupe`, `.loupe/cache`, `.loupe/tree.json` or `architecture.html` as symlinks
-// (or `.loupe` as a file) to make us write elsewhere. Our directories must be real directories inside the repo and the
-// files we write must not be symlinks; otherwise stop rather than write through them.
-const REAL_REPO = realpathSync(REPO);
-const inRepo = (p) => { const r = relative(REPO, p); return r === '' || (!r.startsWith('..') && !isAbsolute(r)); };
-const lst = (p) => { try { return lstatSync(p); } catch { return null; } };
-const refuse = (p, what) => fail(`refusing to use ${show(p)}: it is ${what}. Remove it (it may come from the repo) and run loupe again.`, 2);
-function ownDir(p) {
-  const st = lst(p);
-  if (st && st.isSymbolicLink()) refuse(p, 'a symlink');
-  if (st && !st.isDirectory()) refuse(p, 'not a directory');
-  if (!st) mkdirSync(p);
-  const r = relative(REAL_REPO, realpathSync(p));
-  if (r.startsWith('..') || isAbsolute(r)) refuse(p, 'outside the repo');
-}
-const ownFile = (p) => { const st = lst(p); if (st && !st.isFile()) refuse(p, st.isSymbolicLink() ? 'a symlink' : 'not a regular file'); };
+// The repo is untrusted: it may commit `.loupe`, `.loupe/cache`, `.loupe/tree.json`, `architecture.html` or a parent
+// dir of `--out` as symlinks to make us write elsewhere, or track `.loupe/` to pre-seed cached answers.
+const inRepo = (p) => within(REPO, p);
 const truthy = (v) => !!v && !/^(0|false|no)$/i.test(v);
+const loupeTracked = hasTrackedFiles(REPO, WORK);
+if (loupeTracked) console.error('loupe: warning: .loupe/ has files tracked by git; ignoring its cache and saved config.');
 
 // ---------- which model: ask in a terminal, unless the backend or model was given ----------
 // Never prompts in CI, when stdin or stdout isn't a terminal, or with --backend/--model/LOUPE_BACKEND/LOUPE_MODEL.
@@ -76,11 +67,11 @@ const announce = () => { if (!announced) console.log(`loupe · mapping ${REPO}`)
 if (interactive) {
   const options = detectOptions();
   if (options.length > 1) {
-    // the remembered choice comes from the repo dir: read it only as a plain small file in a real .loupe/, and only
-    // ever compare it against the offered options (initialIndex)
+    // the remembered choice comes from the repo dir: read it only when .loupe/ is not tracked by git, as a plain
+    // small file in a real .loupe/, and only ever compare it against the offered options (initialIndex)
     let remembered = null;
     // (O_NOFOLLOW + O_NONBLOCK + fstat: no symlink, FIFO or device even if it is swapped in after the lstat)
-    try {
+    if (!loupeTracked) try {
       if (lst(WORK)?.isDirectory() && lst(CONFIG)?.isFile()) {
         const fd = openSync(CONFIG, fsc.O_RDONLY | (fsc.O_NOFOLLOW || 0) | (fsc.O_NONBLOCK || 0));
         try { const st = fstatSync(fd); if (st.isFile() && st.size < 4096) remembered = JSON.parse(readFileSync(fd, 'utf8')); } finally { closeSync(fd); }
@@ -103,13 +94,16 @@ announce();
 console.log(`backend: ${backend.name} (${backend.label}, ${backend.model ? `model ${backend.model}` : 'default model'})`);
 
 const CACHE = process.env.LOUPE_CACHE ? resolve(process.env.LOUPE_CACHE) : join(WORK, 'cache');
-ownDir(WORK);
-if (!process.env.LOUPE_CACHE) ownDir(CACHE);
-for (const f of [join(WORK, '.gitignore'), TREE, join(WORK, 'tree.files.json'), ...(chosen ? [CONFIG] : [])]) ownFile(f);
-if (inRepo(OUT)) ownFile(OUT); // an --out outside the repo is the user's own choice
-writeFileSync(join(WORK, '.gitignore'), '# written by loupe: keep the map cache out of git\n*\n');
-if (chosen) writeFileSync(CONFIG, JSON.stringify({ backend: chosen.backend, model: chosen.model }) + '\n'); // the next picker's preselection
-const env = { ...process.env, LOUPE_BACKEND: backend.name, LOUPE_CACHE: CACHE, ...(opts.verbose ? { LOUPE_VERBOSE: '1' } : { LOUPE_QUIET: '1' }) };
+const untrustedCache = loupeTracked && (!process.env.LOUPE_CACHE || within(WORK, CACHE));
+try {
+  safeDir(WORK, { withinDir: REPO });
+  safeDir(CACHE, { withinDir: inRepo(CACHE) ? REPO : null });
+  for (const f of [join(WORK, '.gitignore'), TREE, join(WORK, 'tree.files.json'), ...(chosen ? [CONFIG] : [])]) checkSafePath(f, { withinDir: REPO });
+  if (inRepo(OUT)) checkSafePath(OUT, { withinDir: REPO }); else assertSafeFile(OUT);
+  safeWriteFile(join(WORK, '.gitignore'), '# written by loupe: keep the map cache out of git\n*\n', { withinDir: REPO });
+  if (chosen) safeWriteFile(CONFIG, JSON.stringify({ backend: chosen.backend, model: chosen.model }) + '\n', { withinDir: REPO }); // the next picker's preselection
+} catch (e) { if (e instanceof SafeFsError) fail(e.message, 2); throw e; }
+const env = { ...process.env, LOUPE_BACKEND: backend.name, LOUPE_CACHE: CACHE, ...(untrustedCache ? { LOUPE_UNTRUSTED_CACHE: '1' } : {}), ...(opts.verbose ? { LOUPE_VERBOSE: '1' } : { LOUPE_QUIET: '1' }) };
 const step = (n, label, script, args, stdout = 'inherit') => {
   console.log(`[${n}/3] ${label} …`);
   const r = spawnSync(process.execPath, [join(here, script), ...args], { stdio: ['ignore', stdout, 'inherit'], env });
@@ -119,7 +113,7 @@ const step = (n, label, script, args, stdout = 'inherit') => {
 // ---------- run ----------
 step(1, 'scanning structure + describing code', 'generate.mjs', [REPO, TREE]);
 step(2, 'finding relationships + flows', 'relations.mjs', [REPO, TREE]);
-mkdirSync(dirname(OUT), { recursive: true });
+try { safeDir(dirname(OUT), { withinDir: inRepo(OUT) ? REPO : null }); } catch (e) { if (e instanceof SafeFsError) fail(e.message, 2); throw e; }
 step(3, 'rendering', 'render.mjs', [TREE, OUT], 'ignore');
 
 let nodes = '?';

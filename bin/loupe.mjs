@@ -53,9 +53,12 @@ if (cmd !== 'map') {
     if (!v || (eq === undefined && v.startsWith('-'))) { console.error(`loupe: ${flag} needs a value: ${FLAGS[flag][1]}`); process.exit(2); }
     env[FLAGS[flag][0]] = v;
   }
-  if (env.LOUPE_MODEL && (cmd === 'scan' || cmd === 'relations')) { // render/manifest never use a model
-    const { validateModel } = await import('../src/llm.mjs');
-    try { validateModel(env.LOUPE_MODEL); } catch (e) { console.error(e.message); process.exit(2); }
+  if ((env.LOUPE_MODEL || env.LOUPE_EFFORT) && (cmd === 'scan' || cmd === 'relations')) { // render/manifest never use a model
+    const { validateModel, validateEffort } = await import('../src/llm.mjs');
+    try {
+      if (env.LOUPE_MODEL) validateModel(env.LOUPE_MODEL);
+      if (env.LOUPE_EFFORT) validateEffort(env.LOUPE_EFFORT);
+    } catch (e) { console.error(e.message); process.exit(2); }
   }
 }
 const r = spawnSync(process.execPath, [join(here, '..', 'src', COMMANDS[cmd][0]), ...args], { stdio: 'inherit', env });

@@ -7,10 +7,11 @@
 // Answers are cached as JSON in a directory, keyed by tag + backend + model + prompt hash.
 // API keys never appear in logs or errors: HTTP errors carry the status and a truncated, redacted body.
 import { readFileSync, writeFileSync, lstatSync, statSync, unlinkSync, mkdtempSync, rmSync } from 'node:fs';
-import { join, delimiter, isAbsolute, resolve, extname } from 'node:path';
-import { spawn, execFileSync } from 'node:child_process';
+import { join, delimiter, isAbsolute, resolve, relative, extname } from 'node:path';
+import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
+import { within } from './fs-safe.mjs';
 
 export const BACKENDS = {
   claude: 'Claude Code CLI',
@@ -57,6 +58,17 @@ export function git(cwd, args, opts = {}) {
   return execFileSync(bin, ['-c', 'core.fsmonitor=false', ...args], { cwd, ...opts });
 }
 
+// True if `dirPath` lies inside `repo` and git tracks at least one file under it.
+export function hasTrackedFiles(repo, dirPath) {
+  const base = resolve(repo), target = resolve(dirPath);
+  if (!within(base, target)) return false;
+  const rel = relative(base, target).replace(/\\/g, '/');
+  if (!rel || rel.startsWith('..')) return false;
+  try {
+    return git(base, ['ls-files', '--', rel], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim().length > 0;
+  } catch { return false; }
+}
+
 // Windows .cmd/.bat shims can only run through cmd.exe, which re-parses the whole command line. Only allow that when
 // the path and every argument are free of anything cmd.exe would interpret; otherwise refuse.
 const isBatch = (p) => process.platform === 'win32' && /\.(cmd|bat)$/i.test(p);
@@ -82,10 +94,20 @@ export function validateModel(m) {
 // the model a backend will use: LOUPE_MODEL (validated) or the backend's default ('' = claude's own default)
 export const modelFor = (name) => (process.env.LOUPE_MODEL ? validateModel(process.env.LOUPE_MODEL) : DEFAULT_MODEL[name]);
 
+// LOUPE_EFFORT ends up in `claude --effort <level>` argv or Anthropic's `output_config.effort`: allow-list only.
+export const EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
+export function validateEffort(e) {
+  const s = String(e ?? '').trim().toLowerCase();
+  if (!s) return '';
+  if (!EFFORTS.has(s)) throw new BackendError(`loupe: invalid LOUPE_EFFORT ${JSON.stringify(String(e).slice(0, 60))}: use one of ${[...EFFORTS].join(', ')}`);
+  return s;
+}
+
 // -> { name, label, model, bin? } or throws BackendError with a message fit to show as-is.
 export function resolveBackend(forced = process.env.LOUPE_BACKEND || '') {
   forced = String(forced).trim().toLowerCase();
   modelFor('claude'); // an invalid LOUPE_MODEL fails first, whichever backend
+  validateEffort(process.env.LOUPE_EFFORT);
   if (forced && !Object.hasOwn(BACKENDS, forced)) throw new BackendError(`unknown backend "${forced}": use claude, anthropic or openai`);
   const claudeBin = process.env.LOUPE_CLAUDE_BIN || 'claude';
   const make = (name, extra = {}) => ({ name, label: BACKENDS[name], model: modelFor(name), ...extra });
@@ -110,10 +132,30 @@ function claudeDir() {
   }
   return claudeCwd;
 }
+const claudeSafeModeCache = new Map(); // bin -> boolean
+function supportsSafeMode(bin) {
+  if (claudeSafeModeCache.has(bin)) return claudeSafeModeCache.get(bin);
+  let ok = false;
+  try {
+    const [cmd, args, extra] = spawnArgs(bin, ['--help']);
+    const r = spawnSync(cmd, args, { cwd: claudeDir(), encoding: 'utf8', timeout: 10_000, stdio: ['ignore', 'pipe', 'pipe'], ...extra });
+    ok = /--safe-mode\b/.test(`${r.stdout || ''}\n${r.stderr || ''}`);
+  } catch {}
+  claudeSafeModeCache.set(bin, ok);
+  return ok;
+}
 function runClaude(b, prompt) {
   const cwd = claudeDir();
-  const effort = process.env.LOUPE_EFFORT || '';
-  const [cmd, args, extra] = spawnArgs(b.bin, ['-p', ...(b.model ? ['--model', b.model] : []), ...(effort ? ['--effort', effort] : []), '--tools', '', '--output-format', 'text']);
+  const effort = validateEffort(process.env.LOUPE_EFFORT);
+  const [cmd, args, extra] = spawnArgs(b.bin, [
+    '-p',
+    ...(b.model ? ['--model', b.model] : []),
+    ...(effort ? ['--effort', effort] : []),
+    '--tools', '',
+    '--strict-mcp-config',
+    ...(supportsSafeMode(b.bin) ? ['--safe-mode'] : []),
+    '--output-format', 'text',
+  ]);
   return new Promise((res, rej) => {
     const p = spawn(cmd, args, { cwd, stdio: ['pipe', 'pipe', 'pipe'], ...extra });
     let out = '', err = '';
@@ -124,9 +166,28 @@ function runClaude(b, prompt) {
     p.stdin.end(prompt);
   });
 }
-// strip secrets from anything we print: the API key, and credentials or a query string in any URL
+// Best-effort secret redaction for error messages and stored evidence snippets:
+// URL userinfo (up to the last @ before the host) and query strings, Slack webhook paths, and common token shapes.
+export function redactSecrets(s) {
+  return String(s)
+    .replace(/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/"'`<>]+@/gi, '$1***@')
+    .replace(/(\b[a-z][a-z0-9+.-]*:\/\/[^\s"'`<>?#]+)\?[^\s"'`<>#)]+/gi, '$1?***')
+    .replace(/(\b[a-z][a-z0-9+.-]*:\/\/[^\s"'`<>?#]+)#[^\s"'`<>)]+/gi, '$1#***')
+    .replace(/(hooks\.slack\.com\/(?:services|workflows|triggers)\/)[^\s"'`<>?#)]+/gi, '$1***')
+    .replace(/\b(Bearer\s+)(?!\$\{)[A-Za-z0-9._~+/=-]{8,}/gi, '$1***')
+    .replace(/\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{6,}\b/g, '***')
+    .replace(/\bwhsec_[A-Za-z0-9]{8,}\b/g, '***')
+    .replace(/\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{8,}\b/g, '***')
+    .replace(/\bgh[pousr]_[A-Za-z0-9_]{8,}\b/g, '***')
+    .replace(/\bgithub_pat_[A-Za-z0-9_]{8,}\b/g, '***')
+    .replace(/\bxox[abpers]-[A-Za-z0-9-]{8,}\b/g, '***')
+    .replace(/\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g, '***')
+    .replace(/\bAIza[0-9A-Za-z_-]{20,}\b/g, '***')
+    .replace(/\beyJ[A-Za-z0-9_-]{6,}\.eyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\b/g, '***');
+}
+// strip secrets from anything we print: the API key, and credentials, query strings, or token shapes
 const redact = (s, key) => {
-  let t = String(s).replace(/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/@]*@/gi, '$1***@').replace(/(\b[a-z][a-z0-9+.-]*:\/\/[^\s?#]*)[?#]\S*/gi, '$1?***');
+  let t = redactSecrets(s);
   if (key) t = t.split(key).join('***');
   return t;
 };
@@ -151,7 +212,7 @@ async function post(url, headers, body, key) {
 async function runAnthropic(b, prompt) {
   const key = process.env.ANTHROPIC_API_KEY;
   const base = (process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com').replace(/\/+$/, '');
-  const effort = process.env.LOUPE_EFFORT;
+  const effort = validateEffort(process.env.LOUPE_EFFORT);
   const j = await post(`${base}/v1/messages`, { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
     { model: b.model, max_tokens: 16000, ...(effort ? { output_config: { effort } } : {}), messages: [{ role: 'user', content: prompt }] }, key);
   if (j.stop_reason === 'refusal') throw new Error('the model declined this request');
@@ -185,9 +246,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 //   onFail 'throw' (scan) rethrows after 3 attempts; 'empty' (relations) returns {}.
 // The backend is resolved on the first call that needs it, so fully cached reruns work without one.
 // LOUPE_QUIET hides the per-call start/done lines (LOUPE_VERBOSE brings them back); failures always show.
-export function createLlm({ cache, log, nollm = false, onFail = 'throw' }) {
-  // a bad LOUPE_MODEL stops the step script up front (bin/loupe.mjs and map.mjs already check it before any work)
-  try { modelFor('claude'); } catch (e) { console.error(e.message); process.exit(2); }
+export function createLlm({ cache, log, nollm = false, onFail = 'throw', trustCache = true }) {
+  // a bad LOUPE_MODEL / LOUPE_EFFORT stops the step script up front (bin/loupe.mjs and map.mjs already check before any work)
+  try { modelFor('claude'); validateEffort(process.env.LOUPE_EFFORT); } catch (e) { console.error(e.message); process.exit(2); }
   const CONCURRENCY = Math.max(1, Number(process.env.LOUPE_CONCURRENCY) || 6);
   const chatty = !process.env.LOUPE_QUIET || !!process.env.LOUPE_VERBOSE;
   let backend, backendErr;
@@ -204,7 +265,7 @@ export function createLlm({ cache, log, nollm = false, onFail = 'throw' }) {
     const b = getBackend() || fallback(); // unresolved: still look in the cache
     // tags carry repo-derived names: keep them short enough for a file name
     const cp = join(cache, `${tag.replace(/[^a-z0-9]+/gi, '_').slice(0, 100)}-${keyFor(b, prompt)}.json`);
-    const hit = readCache(cp);
+    const hit = trustCache ? readCache(cp) : null;
     if (hit) { stats.cached++; return hit; }
     if (nollm) return {};
     if (backendErr) { stats.failed++; log('llm fail', tag, backendErr.message.split('\n')[0]); if (onFail === 'empty') return {}; throw backendErr; }
@@ -213,7 +274,8 @@ export function createLlm({ cache, log, nollm = false, onFail = 'throw' }) {
         try {
           const t0 = Date.now(); if (chatty) log('llm start', tag);
           const json = parseJson(await RUN[b.name](b, prompt));
-          writeCache(cp, json); stats.fresh++;
+          if (trustCache) writeCache(cp, json);
+          stats.fresh++;
           if (chatty) log('llm done', tag, `${((Date.now() - t0) / 1000).toFixed(0)}s`);
           return json;
         } catch (e) {

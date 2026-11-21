@@ -2,7 +2,7 @@
 export function answer(prompt) {
   const schema = prompt.slice(prompt.lastIndexOf('Schema: {"'));
   if (schema.startsWith('Schema: {"package"')) {
-    const files = [...prompt.matchAll(/^(\S+\.(?:js|mjs|ts)) \(\d+ loc/gm)].map((m) => m[1]);
+    const files = [...prompt.matchAll(/^(\S+) \(\d+ loc/gm)].map((m) => m[1]);
     return { package: { label: 'Fixture App', shortDescription: 'A tiny app.', longDescription: 'Server, client and a helper.' }, modules: [{ key: 'core', label: 'Core', shortDescription: 'Everything.', longDescription: 'All files.', files }] };
   }
   if (schema.startsWith('Schema: {"files"')) {

@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 // Inline a zoom tree JSON into viewer/template.html.
 // Usage: loupe render <tree.json> [out.html]   (default: <tree>.html)
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { createHash } from 'node:crypto';
+import { safeWriteFile, SafeFsError } from './fs-safe.mjs';
 
 const PLACEHOLDER = '/*__ZOOM_TREE__*/null';
+const CSP_SCRIPT_PLACEHOLDER = "script-src 'unsafe-inline'";
 const [treePath = 'loupe-tree.json', outArg] = process.argv.slice(2);
 const outPath = outArg || treePath.replace(/(\.tree)?\.json$/, '') + '.html';
 
@@ -41,6 +44,18 @@ const safe = JSON.stringify(tree)
   .replace(/\u2029/g, '\\u2029');
 
 // Function replacer so `$` sequences in the data are not interpreted.
-const html = template.replace(PLACEHOLDER, () => safe);
-writeFileSync(resolve(outPath), html);
+let html = template.replace(PLACEHOLDER, () => safe);
+
+// Replace script-src 'unsafe-inline' with exact sha256 hashes of the two inline <script> blocks.
+const scriptHashes = [];
+for (const m of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) {
+  const body = m[1].replace(/\r\n?/g, '\n');
+  scriptHashes.push(`'sha256-${createHash('sha256').update(body, 'utf8').digest('base64')}'`);
+}
+if (scriptHashes.length === 2 && html.includes(CSP_SCRIPT_PLACEHOLDER)) {
+  html = html.replace(CSP_SCRIPT_PLACEHOLDER, () => `script-src ${scriptHashes.join(' ')}`);
+}
+
+try { safeWriteFile(resolve(outPath), html); }
+catch (e) { if (e instanceof SafeFsError) { console.error(`loupe: ${e.message}`); process.exit(2); } throw e; }
 console.log(`wrote ${outPath} (${(html.length / 1024).toFixed(1)} KiB, ${tree.meta?.nodeCount ?? '?'} nodes)`);

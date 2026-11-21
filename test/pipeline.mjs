@@ -7,7 +7,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync
 import { tmpdir } from 'node:os';
 import { join, dirname, delimiter } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { findOnPath } from '../src/llm.mjs';
+import { findOnPath, redactSecrets } from '../src/llm.mjs';
 import { answer } from './_stub-model.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -44,14 +44,20 @@ if (!gitBin) { console.error('git not found'); process.exit(2); }
 const noClaudeDir = join(TMP, 'bin-plain'); mkdirSync(noClaudeDir); symlinkSync(gitBin, join(noClaudeDir, 'git'));
 const fakeClaudeDir = join(TMP, 'bin-claude'); mkdirSync(fakeClaudeDir);
 const fakeClaudeLog = join(TMP, 'claude-calls.log');
-// plain CommonJS (no extension, no package.json): read the prompt from stdin, answer like the stub model
-writeFileSync(join(fakeClaudeDir, 'claude'), `#!${process.execPath}
+// plain CommonJS (no extension, no package.json): answer --help, else read the prompt from stdin and answer like the stub model
+const writeFakeClaude = (dir, helpText) => {
+  writeFileSync(join(dir, 'claude'), `#!${process.execPath}
 const fs = require('node:fs');
+if (process.argv.includes('--help')) { process.stdout.write(${JSON.stringify(helpText)}); process.exit(0); }
 const prompt = fs.readFileSync(0, 'utf8');
 fs.appendFileSync(${JSON.stringify(fakeClaudeLog)}, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd() }) + '\\n');
 import(${JSON.stringify(pathToFileURL(join(ROOT, 'test', '_stub-model.mjs')).href)}).then(({ answer }) => process.stdout.write('Here you go:\\n' + JSON.stringify(answer(prompt))));
 `);
-chmodSync(join(fakeClaudeDir, 'claude'), 0o755);
+  chmodSync(join(dir, 'claude'), 0o755);
+};
+writeFakeClaude(fakeClaudeDir, 'Usage: claude [options]\n  --strict-mcp-config\n  --safe-mode\n');
+const fakeClaudeOldDir = join(TMP, 'bin-claude-old'); mkdirSync(fakeClaudeOldDir);
+writeFakeClaude(fakeClaudeOldDir, 'Usage: claude [options]\n  --strict-mcp-config\n');
 
 // a child env with every real credential and loupe setting removed
 function childEnv(extra = {}) {
@@ -60,9 +66,9 @@ function childEnv(extra = {}) {
   return { ...env, PATH: noClaudeDir, LOUPE_NO_OPEN: '1', CI: '1', ...extra };
 }
 // keys: written to a piped stdin (null: stdin ignored; "": a piped stdin left open and silent); timeout kills a hang
-function run(args, env, { keys = null, timeout = 60_000 } = {}) {
+function run(args, env, { keys = null, timeout = 60_000, cwd } = {}) {
   return new Promise((res) => {
-    const p = spawn(process.execPath, [BIN, ...args], { env, stdio: [keys === null ? 'ignore' : 'pipe', 'pipe', 'pipe'] });
+    const p = spawn(process.execPath, [BIN, ...args], { cwd, env, stdio: [keys === null ? 'ignore' : 'pipe', 'pipe', 'pipe'] });
     let out = '', err = '', hung = false;
     const t = setTimeout(() => { hung = true; p.kill(); }, timeout);
     if (keys !== null && keys !== '') p.stdin.write(keys); // '' keeps stdin open and silent
@@ -156,7 +162,13 @@ try {
   check(r.out.includes('backend: claude (Claude Code CLI, default model)'), 'claude: auto-selected over ANTHROPIC_API_KEY, default model', r.out);
   check(seen.count === before, 'claude: no HTTP requests');
   const calls = claudeCalls();
-  check(calls.length > 0 && calls.every((c) => JSON.stringify(c.argv) === JSON.stringify(['-p', '--tools', '', '--output-format', 'text'])), 'claude: CLI called headless with tools off', JSON.stringify(calls[0]));
+  check(calls.length > 0 && calls.every((c) => JSON.stringify(c.argv) === JSON.stringify(['-p', '--tools', '', '--strict-mcp-config', '--safe-mode', '--output-format', 'text'])), 'claude: CLI called headless with tools off, --strict-mcp-config and --safe-mode', JSON.stringify(calls[0]));
+  // older claude CLI without --safe-mode in --help: passes --strict-mcp-config but omits --safe-mode
+  const clOld = fixture('claude-old');
+  const nOld = claudeCalls().length;
+  r = await run(['map', clOld, '--no-open'], childEnv({ PATH: [fakeClaudeOldDir, noClaudeDir].join(delimiter) }));
+  const oldCalls = claudeCalls().slice(nOld);
+  check(r.code === 0 && oldCalls.length > 0 && oldCalls.every((c) => JSON.stringify(c.argv) === JSON.stringify(['-p', '--tools', '', '--strict-mcp-config', '--output-format', 'text'])), 'claude (older CLI): omits --safe-mode when not in --help', JSON.stringify(oldCalls[0]) + r.all);
   // the repo could plant .claude/settings.json (hooks) or CLAUDE.md: claude must never run inside it
   check(calls.length > 0 && calls.every((c) => !c.cwd.startsWith(cl)), 'claude: runs outside the repo', JSON.stringify(calls[0]));
   const tree = JSON.parse(readFileSync(join(cl, '.loupe', 'tree.json'), 'utf8'));
@@ -309,6 +321,187 @@ try {
   check(r.code === 0 && claudeCalls().length > n1 && claudeCalls().slice(n1).every((c) => modelArg(c) === 'haiku'), 'relations --model reaches the claude CLI', r.all);
   r = await run(['render', treePath], stEnv);
   check(r.code === 0 && existsSync(join(TMP, 'steps-out', 'steps.html')), 'render subcommand', r.all);
+
+  // ---------- standalone scan / relations / render / manifest refuse symlinks ----------
+  {
+    const b1Victim = join(TMP, 'b1-victim'); mkdirSync(b1Victim);
+    const b1File = join(b1Victim, 'precious'); writeFileSync(b1File, 'keep');
+
+    // scan: loupe-tree.json symlink
+    const s1 = fixture('b1-scan-tree');
+    symlinkSync(b1File, join(s1, 'loupe-tree.json'));
+    r = await run(['scan', '.', '--backend', 'openai'], stEnv, { cwd: s1 });
+    check(r.code === 2 && r.all.includes('refusing') && readFileSync(b1File, 'utf8') === 'keep', 'symlinks: scan refuses loupe-tree.json symlink', r.all);
+
+    // scan: .loupe-cache symlink
+    const s2 = fixture('b1-scan-cache');
+    symlinkSync(b1Victim, join(s2, '.loupe-cache'));
+    r = await run(['scan', '.', '--backend', 'openai'], stEnv, { cwd: s2 });
+    check(r.code === 2 && r.all.includes('refusing') && !existsSync(join(s2, 'loupe-tree.json')), 'symlinks: scan refuses .loupe-cache symlink', r.all);
+
+    // render: loupe-tree.html symlink
+    const s3 = fixture('b1-render-html');
+    writeFileSync(join(s3, 'loupe-tree.json'), readFileSync(treePath, 'utf8'));
+    symlinkSync(b1File, join(s3, 'loupe-tree.html'));
+    r = await run(['render', 'loupe-tree.json'], stEnv, { cwd: s3 });
+    check(r.code === 2 && r.all.includes('refusing') && readFileSync(b1File, 'utf8') === 'keep', 'symlinks: render refuses loupe-tree.html symlink', r.all);
+
+    // relations: tree symlink and .loupe-cache symlink
+    const s4 = fixture('b1-rel-cache');
+    writeFileSync(join(s4, 'loupe-tree.json'), readFileSync(treePath, 'utf8'));
+    writeFileSync(join(s4, 'loupe-tree.files.json'), readFileSync(treePath.replace(/\.json$/, '.files.json'), 'utf8'));
+    symlinkSync(b1Victim, join(s4, '.loupe-cache'));
+    r = await run(['relations', '.', 'loupe-tree.json', '--backend', 'openai'], stEnv, { cwd: s4 });
+    check(r.code === 2 && r.all.includes('refusing'), 'symlinks: relations refuses .loupe-cache symlink', r.all);
+
+    const s5 = fixture('b1-rel-tree');
+    symlinkSync(b1File, join(s5, 'loupe-tree.json'));
+    r = await run(['relations', '.', 'loupe-tree.json', '--backend', 'openai'], stEnv, { cwd: s5 });
+    check(r.code === 2 && r.all.includes('refusing') && readFileSync(b1File, 'utf8') === 'keep', 'symlinks: relations refuses tree.json symlink', r.all);
+
+    // manifest: output symlink
+    const manDir = join(TMP, 'b1-manifest'); mkdirSync(manDir);
+    writeFileSync(join(manDir, 'sys.yaml'), 'system:\n  name: Demo\nservices:\n  - id: api\n    description: Main API.\n');
+    symlinkSync(b1File, join(manDir, 'sys.tree.json'));
+    r = await run(['manifest', join(manDir, 'sys.yaml')], stEnv);
+    check(r.code === 2 && r.all.includes('refusing') && readFileSync(b1File, 'utf8') === 'keep', 'symlinks: manifest refuses output symlink', r.all);
+  }
+
+  // ---------- --out parent dir realpath-confined when inside the repo ----------
+  {
+    const f5Victim = join(TMP, 'f5-victim'); mkdirSync(f5Victim);
+    const f5 = fixture('f5-out-dir');
+    symlinkSync(f5Victim, join(f5, 'docs'));
+    r = await run(['map', f5, '--out', join(f5, 'docs', 'map.html'), '--no-open', '--backend', 'openai'], stEnv);
+    check(r.code === 2 && r.all.includes('refusing') && !existsSync(join(f5Victim, 'map.html')), '--out confinement: --out through symlinked dir inside repo is refused', r.all);
+  }
+
+  // ---------- secret redaction in evidence snippets (unit + end-to-end) ----------
+  {
+    const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c';
+    const samples = [
+      ['https://user:p@ss@api.example.com/v1?api_key=TOPSECRET', ['user:p@ss', 'TOPSECRET']],
+      ['https://hooks.slack.com/services/T0001/B0001/SLACKWEBHOOKSECRET', ['SLACKWEBHOOKSECRET']],
+      ['Authorization: "Bearer supersecrettoken1234"', ['supersecrettoken1234']],
+      ['const a = "sk-ant-api03-1234567890abcdef";', ['1234567890abcdef']],
+      ['const b = "sk_live_STRIPESECRET123";', ['STRIPESECRET123']],
+      ['const c = "ghp_1234567890abcdefghij";', ['1234567890abcdefghij']],
+      ['const d = "github_pat_11ABCDEFGH_1234567890";', ['11ABCDEFGH_1234567890']],
+      ['const e = "xoxb-1234567890-abcdef";', ['1234567890-abcdef']],
+      ['const f = "AKIAIOSFODNN7EXAMPLE";', ['AKIAIOSFODNN7EXAMPLE']],
+      ['const g = "AIzaSyFAKE0FAKE0FAKE0FAKE0FAKE0FAKE0FAK";', ['AIzaSyFAKE0FAKE0']],
+      [`const h = "${jwt}";`, ['SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c']],
+    ];
+    for (const [input, leaks] of samples) {
+      const out = redactSecrets(input);
+      check(leaks.every((l) => !out.includes(l)) && out.includes('***'), `evidence redaction: ${leaks[0]}`, out);
+    }
+    const f1 = fixture('f1-secrets');
+    writeFileSync(join(f1, 'src', 'server.js'), [
+      `import express from 'express';`,
+      `const SLACK = "https://hooks.slack.com/services/T0001/B0001/SLACKWEBHOOKSECRET";`,
+      `export async function bill() {`,
+      `  await fetch("https://api.stripe.com/v1/charges?api_key=sk_live_STRIPESECRET", { headers: { Authorization: "Bearer sk_live_STRIPESECRET" } });`,
+      `  return SLACK;`,
+      `}`,
+      `const app = express();`,
+      `app.get('/api/items', (req, res) => res.json([]));`,
+    ].join('\n'));
+    execFileSync(gitBin, ['add', '-A'], { cwd: f1, stdio: 'pipe' });
+    execFileSync(gitBin, ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'secrets'], { cwd: f1, stdio: 'pipe' });
+    r = await run(['map', f1, '--no-open', '--backend', 'openai'], stEnv);
+    const htmlF1 = readFileSync(join(f1, 'architecture.html'), 'utf8');
+    const treeF1 = readFileSync(join(f1, '.loupe', 'tree.json'), 'utf8');
+    check(r.code === 0 && !htmlF1.includes('SLACKWEBHOOKSECRET') && !htmlF1.includes('STRIPESECRET') && !treeF1.includes('SLACKWEBHOOKSECRET') && !treeF1.includes('STRIPESECRET'), 'evidence redaction e2e: secrets redacted from evidence in tree.json and architecture.html', treeF1.slice(0, 1500));
+  }
+
+  // ---------- tracked .loupe/ cache is warned and ignored ----------
+  {
+    const f4 = fixture('f4-tracked-cache');
+    // first map once to discover exact cache filenames, then tamper + commit .loupe/cache/
+    r = await run(['map', f4, '--no-open', '--backend', 'openai'], stEnv);
+    check(r.code === 0, 'tracked cache: setup run', r.all);
+    const cacheDir = join(f4, '.loupe', 'cache');
+    const { readdirSync } = await import('node:fs');
+    for (const f of readdirSync(cacheDir)) {
+      if (f.startsWith('system-')) writeFileSync(join(cacheDir, f), JSON.stringify({ label: 'POISONED SYSTEM', shortDescription: 'Poisoned.', longDescription: 'Poisoned.' }));
+    }
+    rmSync(join(f4, '.loupe', '.gitignore'));
+    execFileSync(gitBin, ['add', '-f', '.loupe/cache'], { cwd: f4, stdio: 'pipe' });
+    execFileSync(gitBin, ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'track cache'], { cwd: f4, stdio: 'pipe' });
+    const cBefore = seen.count;
+    r = await run(['map', f4, '--no-open', '--backend', 'openai'], stEnv);
+    const treeF4 = readFileSync(join(f4, '.loupe', 'tree.json'), 'utf8');
+    check(r.code === 0 && /tracked by git/i.test(r.err) && seen.count > cBefore && !treeF4.includes('POISONED SYSTEM'), 'tracked cache: tracked .loupe/ warns and ignores pre-seeded cache', r.all);
+  }
+
+  // ---------- secret-file deny-list + LOUPE_IGNORE in relations.mjs ----------
+  {
+    const f6 = fixture('f6-secret-files');
+    writeFileSync(join(f6, '.env.js'), 'export const SECRET = "top-secret";\n');
+    writeFileSync(join(f6, 'src', 'secrets.ts'), 'export const KEY = "secret-key";\n');
+    writeFileSync(join(f6, 'src', 'credentials.js'), 'export const PASS = "cred-pass";\n');
+    writeFileSync(join(f6, 'src', 'private_key.py'), 'KEY = "priv"\n');
+    writeFileSync(join(f6, 'cert.pem'), '-----BEGIN PRIVATE KEY-----\n');
+    execFileSync(gitBin, ['add', '-A'], { cwd: f6, stdio: 'pipe' });
+    execFileSync(gitBin, ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'secret files'], { cwd: f6, stdio: 'pipe' });
+    r = await run(['map', f6, '--no-open', '--backend', 'openai'], stEnv);
+    const treeF6 = readFileSync(join(f6, '.loupe', 'tree.json'), 'utf8');
+    const filesF6 = readFileSync(join(f6, '.loupe', 'tree.files.json'), 'utf8');
+    const blocked = ['.env.js', 'secrets.ts', 'credentials.js', 'private_key.py', 'cert.pem'];
+    check(r.code === 0 && blocked.every((b) => !treeF6.includes(b) && !filesF6.includes(b)), 'secret files: secret-looking files excluded from scan', filesF6);
+    // LOUPE_IGNORE in relations.mjs: ignoring src/client.js removes the HTTP relation from client.js
+    const relTree = join(f6, '.loupe', 'tree.json');
+    r = await run(['relations', f6, relTree, '--backend', 'openai'], { ...stEnv, LOUPE_IGNORE: '^src/client\\.js$', LOUPE_NOLLM: '1' });
+    const afterIgn = JSON.parse(readFileSync(relTree, 'utf8'));
+    check(r.code === 0 && !afterIgn.root.relations.some((x) => x.kind === 'http'), 'secret files: LOUPE_IGNORE works in relations.mjs', JSON.stringify(afterIgn.root.relations));
+  }
+
+  // ---------- LOUPE_EFFORT allow-list ----------
+  {
+    const f7 = fixture('f7-effort');
+    for (const badEffort of ['--dangerously-skip-permissions', 'ultra', 'low high']) {
+      const cBefore = seen.count;
+      r = await run(['map', f7, '--no-open', '--backend', 'openai'], { ...stEnv, LOUPE_EFFORT: badEffort });
+      check(r.code === 2 && /LOUPE_EFFORT/.test(r.err) && seen.count === cBefore, `LOUPE_EFFORT: rejects invalid LOUPE_EFFORT=${badEffort}`, r.all);
+    }
+    const nEff = claudeCalls().length;
+    r = await run(['map', f7, '--no-open'], clEnv({ LOUPE_EFFORT: 'low' }));
+    const effCalls = claudeCalls().slice(nEff);
+    check(r.code === 0 && effCalls.length > 0 && effCalls.every((c) => c.argv.includes('--effort') && c.argv[c.argv.indexOf('--effort') + 1] === 'low'), 'LOUPE_EFFORT: valid LOUPE_EFFORT=low passes --effort low', JSON.stringify(effCalls[0]));
+  }
+
+  // ---------- repoSource strips up to the last @ before the host ----------
+  {
+    const f11 = fixture('f11-remote');
+    execFileSync(gitBin, ['remote', 'add', 'origin', 'https://user:p@ss@example.com/org/my-repo.git'], { cwd: f11, stdio: 'pipe' });
+    r = await run(['map', f11, '--no-open', '--backend', 'openai'], stEnv);
+    const meta11 = JSON.parse(readFileSync(join(f11, '.loupe', 'tree.json'), 'utf8')).meta;
+    check(r.code === 0 && meta11.source === 'example.com/org/my-repo', 'repoSource: repoSource strips password containing @', JSON.stringify(meta11));
+  }
+
+  // ---------- no supported source files preflight + multi-language support ----------
+  {
+    const emptyRepo = join(TMP, 'no-source'); mkdirSync(emptyRepo);
+    writeFileSync(join(emptyRepo, 'README.md'), '# Docs only\n');
+    const g = (...a) => execFileSync(gitBin, a, { cwd: emptyRepo, stdio: 'pipe' });
+    g('init', '-q'); g('add', '-A'); g('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'init');
+    const cBefore = seen.count;
+    r = await run(['map', emptyRepo, '--no-open', '--backend', 'openai'], stEnv);
+    check(r.code === 2 && /no supported source files/i.test(r.err) && seen.count === cBefore, 'languages: repo with no source files exits 2 before any model call', r.all);
+
+    // Multi-language (Python + Go + Rust, no package.json)
+    const poly = join(TMP, 'polyglot-app'); mkdirSync(join(poly, 'src'), { recursive: true });
+    writeFileSync(join(poly, 'src', 'signer.py'), 'class Signer:\n    pass\n\ndef sign_bytes(data):\n    return data\n');
+    writeFileSync(join(poly, 'src', 'server.go'), 'package main\n\ntype Config struct{}\n\nfunc StartServer() {}\n');
+    writeFileSync(join(poly, 'src', 'lib.rs'), 'pub struct Token;\npub fn verify() -> bool { true }\n');
+    const gp = (...a) => execFileSync(gitBin, a, { cwd: poly, stdio: 'pipe' });
+    gp('init', '-q'); gp('add', '-A'); gp('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'init');
+    r = await run(['map', poly, '--no-open', '--backend', 'openai'], stEnv);
+    const polyTree = existsSync(join(poly, '.loupe', 'tree.json')) ? JSON.parse(readFileSync(join(poly, '.loupe', 'tree.json'), 'utf8')) : null;
+    const polyText = JSON.stringify(polyTree);
+    check(r.code === 0 && polyTree?.root?.children?.[0]?.packageName === 'polyglot-app' && polyText.includes('class Signer') && polyText.includes('StartServer()') && polyText.includes('struct Token'), 'languages: multi-language repo without package.json maps Python/Go/Rust + extracts exports', polyText.slice(0, 1500));
+  }
 } finally {
   server.close();
   rmSync(TMP, { recursive: true, force: true });

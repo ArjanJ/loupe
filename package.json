@@ -1,10 +1,13 @@
 {
   "name": "@arjanj/loupe",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Zoomable, Apple-style architecture maps for codebases and multi-repo systems. One self-contained HTML file.",
   "type": "module",
   "license": "MIT",
   "author": "Arjan Jassal",
+  "homepage": "https://arjanj.github.io/loupe/",
+  "repository": { "type": "git", "url": "git+https://github.com/ArjanJ/loupe.git" },
+  "bugs": { "url": "https://github.com/ArjanJ/loupe/issues" },
   "bin": { "loupe": "bin/loupe.mjs" },
   "files": ["bin/", "src/", "viewer/", "docs/manifest.md", "docs/tree-format.md", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md"],
   "engines": { "node": ">=18" },
@@ -16,5 +19,5 @@
   },
   "dependencies": { "yaml": "^2.5.0" },
   "devDependencies": { "playwright": "^1.48.0" },
-  "keywords": ["architecture", "diagram", "codebase", "map", "treemap", "zoom", "monorepo", "microservices", "claude-code"]
+  "keywords": ["architecture", "diagram", "codebase", "map", "treemap", "zoom", "monorepo", "microservices", "claude-code", "visualization", "static-analysis", "cli", "typescript", "python"]
 }

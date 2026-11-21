@@ -9,10 +9,12 @@ const HTML = 'file://' + resolve(process.argv[2]);
 const browser = await chromium.launch();
 const errors = [];
 const results = {};
+const ALLOWED_PROTO = /^(file|data|blob|about):/i;
 async function open(colorScheme = 'light') {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2, colorScheme });
   page.on('pageerror', (e) => errors.push(e.message));
   page.on('console', (m) => (m.type() === 'error' || m.type() === 'warning') && errors.push(m.text()));
+  page.on('request', (req) => { if (!ALLOWED_PROTO.test(req.url())) errors.push(`network request: ${req.url()}`); });
   await page.goto(HTML); await page.evaluate(() => document.fonts.ready); await page.waitForTimeout(300);
   return page;
 }
