@@ -152,7 +152,7 @@ try {
   const bad = fixture('bad');
   const BAD = 'sk-bad-0123456789abcdef';
   r = await run(['map', bad, '--no-open'], childEnv({ ANTHROPIC_API_KEY: BAD, ANTHROPIC_BASE_URL: BASE }));
-  check(r.code !== 0 && r.all.includes('HTTP 401') && r.all.includes('***') && !r.all.includes(BAD), 'bad key: HTTP 401 shown, key redacted', r.all);
+  check(r.code !== 0 && r.all.includes('HTTP 401') && r.all.includes('***') && !r.all.includes(BAD) && /scanning failed \(exit 1\)/.test(r.err), 'bad key: HTTP 401 shown, key redacted, keeps scanning failed line', r.all);
 
   // claude: the fake CLI on PATH wins over API keys
   const cl = fixture('claude');
@@ -488,19 +488,205 @@ try {
     g('init', '-q'); g('add', '-A'); g('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'init');
     const cBefore = seen.count;
     r = await run(['map', emptyRepo, '--no-open', '--backend', 'openai'], stEnv);
-    check(r.code === 2 && /no supported source files/i.test(r.err) && seen.count === cBefore, 'languages: repo with no source files exits 2 before any model call', r.all);
+    check(r.code === 2 && /no supported source files/i.test(r.err) && !/scanning failed/.test(r.err) && seen.count === cBefore, 'languages: repo with no source files exits 2 without duplicate scanning-failed line', r.all);
 
-    // Multi-language (Python + Go + Rust, no package.json)
+    // Multi-language (Python + Go + Rust + C/C++ + Objective-C, no package.json)
     const poly = join(TMP, 'polyglot-app'); mkdirSync(join(poly, 'src'), { recursive: true });
     writeFileSync(join(poly, 'src', 'signer.py'), 'class Signer:\n    pass\n\ndef sign_bytes(data):\n    return data\n');
     writeFileSync(join(poly, 'src', 'server.go'), 'package main\n\ntype Config struct{}\n\nfunc StartServer() {}\n');
     writeFileSync(join(poly, 'src', 'lib.rs'), 'pub struct Token;\npub fn verify() -> bool { true }\n');
+    for (const ext of ['cc', 'cxx', 'hh', 'hxx', 'c++', 'h++', 'm', 'mm']) {
+      writeFileSync(join(poly, 'src', `native.${ext}`), `int fn_${ext.replace(/\+/g, 'p')}(void) { return 0; }\n`);
+    }
     const gp = (...a) => execFileSync(gitBin, a, { cwd: poly, stdio: 'pipe' });
     gp('init', '-q'); gp('add', '-A'); gp('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'init');
     r = await run(['map', poly, '--no-open', '--backend', 'openai'], stEnv);
     const polyTree = existsSync(join(poly, '.loupe', 'tree.json')) ? JSON.parse(readFileSync(join(poly, '.loupe', 'tree.json'), 'utf8')) : null;
+    const polyFiles = existsSync(join(poly, '.loupe', 'tree.files.json')) ? JSON.parse(readFileSync(join(poly, '.loupe', 'tree.files.json'), 'utf8')) : {};
     const polyText = JSON.stringify(polyTree);
-    check(r.code === 0 && polyTree?.root?.children?.[0]?.packageName === 'polyglot-app' && polyText.includes('class Signer') && polyText.includes('StartServer()') && polyText.includes('struct Token'), 'languages: multi-language repo without package.json maps Python/Go/Rust + extracts exports', polyText.slice(0, 1500));
+    const cppObjcOk = ['cc', 'cxx', 'hh', 'hxx', 'c++', 'h++', 'm', 'mm'].every((ext) => Object.hasOwn(polyFiles, `src/native.${ext}`));
+    check(r.code === 0 && polyTree?.root?.children?.[0]?.packageName === 'polyglot-app' && polyText.includes('class Signer') && polyText.includes('StartServer()') && polyText.includes('struct Token') && cppObjcOk, 'languages: multi-language repo maps Python/Go/Rust/C++/Objective-C + extracts exports', polyText.slice(0, 1500));
+  }
+
+  // ---------- skip vendored, build, generated, gitignored, .gitattributes & minified files (with re-include) ----------
+  {
+    const vend = join(TMP, 'vendored-repo');
+    const write = (rel, content) => {
+      const full = join(vend, rel);
+      mkdirSync(dirname(full), { recursive: true });
+      writeFileSync(full, content);
+    };
+    // Real source files that must be mapped (including nested build/out/target/coverage/vendors)
+    write('cmd/main.go', 'package main\nfunc Main() {}\n');
+    write('internal/app/app.go', 'package app\nfunc Run() {}\n');
+    write('other/gen/handwritten.go', 'package gen\nfunc Handwritten() {}\n'); // gen/ without *.pb.* is kept
+    write('src/build/index.ts', 'export const buildIndex = 1;\n');
+    write('lib/out/writer.js', 'export const writeOut = () => {};\n');
+    write('src/target/aim.ts', 'export const aim = 1;\n');
+    write('src/coverage/plan.ts', 'export const plan = 1;\n');
+    write('src/vendors/list.ts', 'export const vendorList = [];\n');
+    // Default excluded directories
+    write('vendor/github.com/foo/bar/f1.go', 'package bar\nfunc F1() {}\n');
+    write('src/vendor/dep.js', 'export const sv = 1;\n'); // vendor/ still skipped at any depth
+    write('vendors/lib/v.js', 'export const v = 1;\n');
+    write('third_party/lib/f1.c', 'int f1(void){return 0;}\n');
+    write('third-party/lib/f2.h', 'int f2(void);\n');
+    write('Pods/AFNetworking/f1.swift', 'func pod() {}\n');
+    write('Carthage/Checkouts/x.swift', 'func carthage() {}\n');
+    write('bower_components/pkg/a.js', 'export const a = 1;\n');
+    write('node_modules/pkg/index.js', 'export const n = 1;\n');
+    write('build/app.js', 'export const bRoot = 1;\n');
+    write('build/gen/x1_pb2.py', 'def x(): pass\n');
+    write('out/app.js', 'export const o = 1;\n');
+    write('target/debug/x1.rs', 'pub fn x() {}\n');
+    write('dist/index.js', 'export const d = 1;\n');
+    write('src/dist/nested.js', 'export const dn = 1;\n'); // dist/ still skipped at any depth
+    write('.next/server.js', 'export const nx = 1;\n');
+    write('.nuxt/app.js', 'export const nu = 1;\n');
+    write('.svelte-kit/out.js', 'export const sk = 1;\n');
+    write('coverage/report.js', 'export const cv = 1;\n');
+    write('generated/types.ts', 'export type T = string;\n');
+    write('__generated__/gql.ts', 'export const q = 1;\n');
+    write('gen/proto/x1.pb.go', 'package proto\nfunc X1() {}\n');
+    write('gen/proto/helper.go', 'package proto\nfunc Helper() {}\n'); // inside gen/ holding *.pb.*
+    write('test-d/types.ts', 'export const t = 1;\n');
+    // Default excluded files
+    write('public/js/app.min.js', 'export const m = 1;\n');
+    write('public/js/app.bundle.js', 'export const b = 1;\n');
+    write('api/svc.pb.go', 'package api\nfunc S() {}\n');
+    write('api/svc.pb.gw.go', 'package api\nfunc G() {}\n');
+    write('py/msg_pb2.py', 'def m(): pass\n');
+    write('py/msg_pb2_grpc.py', 'def g(): pass\n');
+    write('src/schema.generated.ts', 'export const s = 1;\n');
+    write('src/Form.designer.cs', 'class Form {}\n');
+    write('docs/conf.py', 'project = "x"\n');
+    // Minified files (not matching *.min.js)
+    write('src/avg_long.js', 'var a=function(b){return b+1};'.repeat(30) + '\n'); // > 500 avg line len
+    write('src/huge_line.js', 'const a = 1;\n'.repeat(20) + 'const big = "' + 'x'.repeat(5100) + '";\n'); // > 5000 single line
+    // Force-added .gitignored file
+    write('.gitignore', 'ignored_dir/\n');
+    write('ignored_dir/tracked_ignored.js', 'export const ign = 1;\n');
+    // .gitattributes exclusions and re-includes
+    write('src/attr_gen.ts', 'export const ag = 1;\n');
+    write('src/attr_vend.ts', 'export const av = 1;\n');
+    write('src/attr_nodiff.ts', 'export const an = 1;\n');
+    write('src/attr_bin.ts', 'export const ab = 1;\n');
+    write('vendor/keep_me.go', 'package keep\nfunc Keep() {}\n');
+    write('build/keep_build.js', 'export const keptBuild = 1;\n');
+    write('src/keep_me.generated.ts', 'export const keptGen = 1;\n');
+    write('src/keep_minified.js', 'var k=function(x){return x+1};'.repeat(30) + '\n');
+    write('.gitattributes', [
+      'src/attr_gen.ts linguist-generated=true',
+      'src/attr_vend.ts linguist-vendored',
+      'src/attr_nodiff.ts -diff',
+      'src/attr_bin.ts binary',
+      'vendor/keep_me.go linguist-vendored=false',
+      'build/keep_build.js linguist-generated=false',
+      'src/keep_me.generated.ts linguist-generated=false',
+      'src/keep_minified.js linguist-generated=false',
+    ].join('\n') + '\n');
+
+    const gv = (...a) => execFileSync(gitBin, a, { cwd: vend, stdio: 'pipe' });
+    gv('init', '-q');
+    gv('add', '-A');
+    gv('add', '-f', 'ignored_dir/tracked_ignored.js');
+    gv('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'init');
+
+    r = await run(['map', vend, '--no-open', '--backend', 'openai'], stEnv);
+    const vendFiles = existsSync(join(vend, '.loupe', 'tree.files.json')) ? Object.keys(JSON.parse(readFileSync(join(vend, '.loupe', 'tree.files.json'), 'utf8'))).sort() : [];
+    const expectedKept = [
+      'build/keep_build.js',
+      'cmd/main.go',
+      'internal/app/app.go',
+      'lib/out/writer.js',
+      'other/gen/handwritten.go',
+      'src/build/index.ts',
+      'src/coverage/plan.ts',
+      'src/keep_me.generated.ts',
+      'src/keep_minified.js',
+      'src/target/aim.ts',
+      'src/vendors/list.ts',
+      'vendor/keep_me.go',
+    ];
+    check(r.code === 0 && JSON.stringify(vendFiles) === JSON.stringify(expectedKept), 'scan quality: excludes vendored/build/generated/ignored/minified/gitattributes files and honours re-include', JSON.stringify({ vendFiles, expectedKept }) + '\n' + r.all);
+    check(/skipped \d+ vendored\/generated files \(see \.gitattributes to include\)/.test(r.err), 'scan quality: logs skipped vendored/generated count without --verbose', r.err);
+
+    // Workspace monorepo: output dirs anchored to package roots (keep packages/x/src/build/foo.ts, skip packages/x/build/)
+    const ws = join(TMP, 'ws-anchored-repo');
+    const writeWs = (rel, content) => {
+      const full = join(ws, rel);
+      mkdirSync(dirname(full), { recursive: true });
+      writeFileSync(full, content);
+    };
+    writeWs('package.json', JSON.stringify({ name: 'ws-anchored', private: true, workspaces: ['packages/*', 'packages/angular/build'] }));
+    writeWs('packages/x/package.json', JSON.stringify({ name: '@ws/x', version: '1.0.0', type: 'module' }));
+    writeWs('packages/x/src/index.ts', `import { runBuild } from './build/foo';\nexport const out = runBuild();\n`);
+    writeWs('packages/x/src/build/foo.ts', `export function runBuild() {\n  return fetch('https://hooks.slack.com/services/T0/B0/XYZ');\n}\n`);
+    writeWs('packages/x/build/compiled.js', `export function leaked() { return fetch('https://api.github.com/repos/org/app'); }\n`);
+    writeWs('packages/x/build/keep_me.js', `export const keptPkgBuild = 1;\n`);
+    writeWs('packages/x/out/app.js', `export const o = 1;\n`);
+    writeWs('packages/x/target/debug.rs', `pub fn d() {}\n`);
+    writeWs('packages/x/coverage/lcov.js', `export const cv = 1;\n`);
+    writeWs('packages/x/vendors/dep.js', `export const v = 1;\n`);
+    writeWs('packages/angular/build/package.json', JSON.stringify({ name: '@angular/build', version: '1.0.0', type: 'module' }));
+    writeWs('packages/angular/build/src/index.ts', `export const ngBuild = 1;\n`);
+    writeWs('packages/angular/build/build/out.js', `export const ngOut = 1;\n`);
+    writeWs('.gitattributes', 'packages/x/build/keep_me.js linguist-generated=false\n');
+    const gws = (...a) => execFileSync(gitBin, a, { cwd: ws, stdio: 'pipe' });
+    gws('init', '-q');
+    gws('add', '-A');
+    gws('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'init');
+
+    r = await run(['map', ws, '--no-open', '--backend', 'openai'], stEnv);
+    const wsFilesPath = join(ws, '.loupe', 'tree.files.json');
+    const wsTreePath = join(ws, '.loupe', 'tree.json');
+    const wsFiles = existsSync(wsFilesPath) ? Object.keys(JSON.parse(readFileSync(wsFilesPath, 'utf8'))).sort() : [];
+    const expectedWsKept = [
+      'packages/angular/build/src/index.ts',
+      'packages/x/build/keep_me.js',
+      'packages/x/src/build/foo.ts',
+      'packages/x/src/index.ts',
+    ];
+    check(r.code === 0 && JSON.stringify(wsFiles) === JSON.stringify(expectedWsKept), 'scan quality (workspace): keeps packages/x/src/build/foo.ts and packages/angular/build/src/, skips packages/x/build/ unless re-included', JSON.stringify({ wsFiles, expectedWsKept }) + '\n' + r.all);
+
+    // relations.mjs agrees with generate.mjs on workspace-anchored output dirs
+    const wsMap = JSON.parse(readFileSync(wsFilesPath, 'utf8'));
+    wsMap['packages/x/build/compiled.js'] = wsMap['packages/x/src/index.ts'];
+    writeFileSync(wsFilesPath, JSON.stringify(wsMap, null, 1));
+    r = await run(['relations', ws, wsTreePath, '--backend', 'openai'], { ...stEnv, LOUPE_NOLLM: '1' });
+    const wsRels = existsSync(wsTreePath) ? JSON.parse(readFileSync(wsTreePath, 'utf8')).root.relations : [];
+    const wsHasSlack = wsRels.some((x) => x.kind === 'external' && x.to === 'ext:slack');
+    const wsHasGithub = wsRels.some((x) => x.to === 'ext:github');
+    check(r.code === 0 && wsHasSlack && !wsHasGithub, 'scan quality (workspace): relations.mjs keeps packages/x/src/build/foo.ts and skips packages/x/build/', JSON.stringify(wsRels) + '\n' + r.all);
+  }
+
+  // ---------- JS/TS private class fields are not treated as # comments ----------
+  {
+    const priv = join(TMP, 'private-fields');
+    mkdirSync(join(priv, 'src'), { recursive: true });
+    mkdirSync(join(priv, 'prisma'), { recursive: true });
+    writeFileSync(join(priv, 'package.json'), JSON.stringify({ name: 'priv', version: '1.0.0', type: 'module' }));
+    writeFileSync(join(priv, 'prisma', 'schema.prisma'), 'model Invoice {\n  id Int @id\n}\n');
+    writeFileSync(join(priv, 'src', 'pay.ts'), [
+      `import Stripe from 'stripe';`,
+      `export class Payments {`,
+      `  #stripe = new Stripe(process.env.STRIPE_KEY!);`,
+      `  #slack = fetch('https://hooks.slack.com/services/T0/B0/XYZ', { method: 'POST' });`,
+      `  #db = new PrismaClient();`,
+      `  list() { return this.#db.invoice.findMany(); }`,
+      `}`,
+    ].join('\n') + '\n');
+    writeFileSync(join(priv, 'src', 'index.ts'), `import { Payments } from './pay';\nexport const p = new Payments();\n`);
+    writeFileSync(join(priv, 'src', 'notes.py'), `# https://api.github.com/repos/org/app\ndef noop():\n    return None\n`);
+    const gp = (...a) => execFileSync(gitBin, a, { cwd: priv, stdio: 'pipe' });
+    gp('init', '-q'); gp('add', '-A'); gp('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'init');
+    r = await run(['map', priv, '--no-open', '--backend', 'openai'], stEnv);
+    const privTree = existsSync(join(priv, '.loupe', 'tree.json')) ? JSON.parse(readFileSync(join(priv, '.loupe', 'tree.json'), 'utf8')) : null;
+    const rels = privTree?.root?.relations || [];
+    const hasSlack = rels.some((x) => x.kind === 'external' && x.to === 'ext:slack');
+    const hasDb = rels.some((x) => x.kind === 'db' && x.to === 'file:prisma/schema.prisma');
+    const hasPyCommentGithub = rels.some((x) => x.to === 'ext:github');
+    check(r.code === 0 && hasSlack && hasDb && !hasPyCommentGithub, 'relations: JS/TS private fields (#slack, #db) detected while # stays a comment in Python', JSON.stringify(rels));
   }
 } finally {
   server.close();

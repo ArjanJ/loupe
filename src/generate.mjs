@@ -11,7 +11,7 @@ import { readFileSync, existsSync, readdirSync, statSync, realpathSync } from 'n
 import { join, dirname, basename, resolve, posix } from 'node:path';
 import { createLlm, BackendError, git, hasTrackedFiles } from './llm.mjs';
 import { SafeFsError, within, lst, checkSafePath, safeDir, safeWriteFile } from './fs-safe.mjs';
-import { SRC_EXT, JS_TS_EXT, SECRET_FILE, EXCLUDE, extractExports } from './source.mjs';
+import { SRC_EXT, JS_TS_EXT, SECRET_FILE, EXCLUDE, isMinified, gitSourceFilters, extractExports } from './source.mjs';
 
 if (!process.argv[2]) { console.error('usage: loupe scan <repoDir> [out.json]'); process.exit(2); }
 const REPO = resolve(process.argv[2]);
@@ -39,7 +39,7 @@ try {
 } catch (e) { if (e instanceof SafeFsError) { console.error(`loupe: ${e.message}`); process.exit(2); } throw e; }
 
 // ---------- 1. structure ----------
-const gitFiles = git(REPO, ['ls-files'], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 }).split('\n').filter(Boolean);
+const gitFiles = git(REPO, ['ls-files', '-z'], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 }).split('\0').filter(Boolean);
 const commit = git(REPO, ['rev-parse', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
 const rootPkg = readJson('package.json') || {};
 // "@acme/shop-monorepo" -> "shop": scope and workspace-ish suffixes say nothing on a map
@@ -72,28 +72,36 @@ for (const g of workspaceGlobs()) {
 if (!packages.length) packages.push({ dir: '.', name: ROOT_NAME });
 log('packages:', packages.map((p) => p.name).join(', '));
 
-const isSource = (f) => SRC_EXT.test(f) && !EXCLUDE.test(f) && !SECRET_FILE.test(f) && !(IGNORE && IGNORE.test(f)) && isRegularFile(f);
-
-const files = new Map(); // path -> info
+const pkgOwner = new Map();
 for (const pkg of packages) {
   const inPkg = pkg.dir === '.' ? (f) => !packages.some((q) => q.dir !== '.' && f.startsWith(q.dir + '/')) : (f) => f.startsWith(pkg.dir + '/');
-  pkg.files = gitFiles.filter((f) => inPkg(f) && isSource(f));
-  for (const f of pkg.files) {
-    const text = readRepo(f);
-    const loc = text.split('\n').filter((l) => l.trim()).length;
-    const exportsList = extractExports(f, text);
-    const specs = [];
-    if (JS_TS_EXT.test(f)) {
-      for (const m of text.matchAll(/(?:^|\n)[ \t]*(?:import|export)\s[^;'"]{0,2000}?from\s*['"]([^'"]+)['"]/g)) specs.push(m[1]);
-      for (const m of text.matchAll(/(?:^|\n)[ \t]*import\s*['"]([^'"]+)['"]/g)) specs.push(m[1]);
-      for (const m of text.matchAll(/import\(\s*['"]([^'"]+)['"]\s*\)/g)) specs.push(m[1]);
-    }
-    files.set(f, { path: f, pkg: pkg.dir, loc, exports: exportsList, specs, text, imports: new Set() });
-  }
+  for (const f of gitFiles) if (!pkgOwner.has(f) && inPkg(f)) pkgOwner.set(f, pkg);
+  pkg.files = [];
 }
+const candidates = [...pkgOwner.keys()].filter((f) => SRC_EXT.test(f) && !EXCLUDE.test(f) && !SECRET_FILE.test(f) && !(IGNORE && IGNORE.test(f)) && isRegularFile(f));
+const filters = gitSourceFilters(REPO, candidates, git, gitFiles, packages.map((p) => p.dir));
+let skippedVendored = 0;
+const files = new Map(); // path -> info
+for (const f of candidates) {
+  if (filters.isSkippedPath(f)) { skippedVendored++; continue; }
+  const text = readRepo(f);
+  if (!filters.isIncludedByAttr(f) && isMinified(text)) { skippedVendored++; continue; }
+  const pkg = pkgOwner.get(f);
+  pkg.files.push(f);
+  const loc = text.split('\n').filter((l) => l.trim()).length;
+  const exportsList = extractExports(f, text);
+  const specs = [];
+  if (JS_TS_EXT.test(f)) {
+    for (const m of text.matchAll(/(?:^|\n)[ \t]*(?:import|export)\s[^;'"]{0,2000}?from\s*['"]([^'"]+)['"]/g)) specs.push(m[1]);
+    for (const m of text.matchAll(/(?:^|\n)[ \t]*import\s*['"]([^'"]+)['"]/g)) specs.push(m[1]);
+    for (const m of text.matchAll(/import\(\s*['"]([^'"]+)['"]\s*\)/g)) specs.push(m[1]);
+  }
+  files.set(f, { path: f, pkg: pkg.dir, loc, exports: exportsList, specs, text, imports: new Set() });
+}
+if (skippedVendored > 0) log(`skipped ${skippedVendored} vendored/generated ${skippedVendored === 1 ? 'file' : 'files'} (see .gitattributes to include)`);
 const activePackages = packages.filter((p) => p.files.length > 0);
 if (!files.size || !activePackages.length) {
-  console.error(`loupe: no supported source files found in ${REPO}.\nLoupe maps git-tracked source files (JS/TS, Python, Go, Rust, Ruby, Java, Kotlin, Swift, PHP, C#, C/C++, Scala, Elixir, Vue, Svelte, SQL, Prisma), excluding tests and build output.${IGNORE ? ' Check LOUPE_IGNORE if it filtered everything out.' : ''}`);
+  console.error(`loupe: no supported source files found in ${REPO}.\nLoupe maps git-tracked source files (JS/TS, Python, Go, Rust, Ruby, Java, Kotlin, Swift, PHP, C#, C/C++, Objective-C, Scala, Elixir, Vue, Svelte, SQL, Prisma), excluding tests, vendored, build and generated output.${IGNORE ? ' Check LOUPE_IGNORE if it filtered everything out.' : ''}`);
   process.exit(2);
 }
 try { safeDir(CACHE, { withinDir: within(REPO, CACHE) ? REPO : null }); }
@@ -221,8 +229,8 @@ async function main() {
       });
       if (mod.rest.length) {
         const loc = mod.rest.reduce((a, f) => a + files.get(f).loc, 0);
-        fileNodes.push({ id: `more:${pkg.dir}:${mod.key}`, label: `+${mod.rest.length} more files`, kind: 'file', path: posix.dirname(mod.rest[0]), weight: Math.max(1, Math.round(loc / 5)),
-          shortDescription: `${mod.rest.length} smaller files in this module.`, longDescription: mod.rest.map((f) => posix.basename(f)).join(', '), functions: [], children: [], edges: [] });
+        fileNodes.push({ id: `more:${pkg.dir}:${mod.key}`, label: `+${mod.rest.length} more ${mod.rest.length === 1 ? 'file' : 'files'}`, kind: 'file', path: posix.dirname(mod.rest[0]), weight: Math.max(1, Math.round(loc / 5)),
+          shortDescription: `${mod.rest.length} smaller ${mod.rest.length === 1 ? 'file' : 'files'} in this module.`, longDescription: mod.rest.map((f) => posix.basename(f)).join(', '), functions: [], children: [], edges: [] });
       }
       const keySet = new Set(mod.keyFiles);
       return { id: modId, label: mod.label, kind: 'module', path: commonDir(mod.files), weight: mod.files.reduce((a, f) => a + files.get(f).loc, 0),
