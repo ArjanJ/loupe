@@ -1,0 +1,192 @@
+# Bramble: a FICTIONAL plant-delivery company, used to show Loupe's system-manifest input.
+# Every name, repo and service here is made up. Schema: docs/manifest.md
+version: 1
+system:
+  name: Bramble
+  description: >-
+    Bramble sells house plants online and delivers them by bike courier the same day.
+    Customers order in the web shop or the mobile app; a dispatch service hands each order to a courier.
+  status: built, with courier tracking and plant-care subscriptions in progress
+
+repos:
+  - name: bramble/storefront
+    role: app
+    description: Web shop and checkout. Next.js.
+  - name: bramble/mobile
+    role: app
+    description: Customer iOS and Android app.
+  - name: bramble/orders
+    role: service
+    description: Order intake and the jobs that move orders along. One repo, two deployables.
+  - name: bramble/dispatch
+    role: service
+    description: Matches paid orders to couriers and tracks deliveries.
+  - name: bramble/care
+    role: service
+    description: Plant-care reminder subscriptions. New; on a branch.
+  - name: bramble/contracts
+    role: library
+    description: Shared TypeScript types and event schemas for every service.
+  - name: bramble/infra
+    role: infrastructure
+    description: Terraform for the cloud account, queues and databases.
+    runsAs: applied from CI on merge
+
+services:
+  - id: storefront
+    name: Storefront
+    repo: bramble/storefront
+    kind: web app
+    description: The web shop. Browses the catalog, runs checkout and shows order status.
+    status: built
+    exposes:
+      - { name: Shop pages, type: web, description: Catalog, plant pages and cart }
+      - { name: Checkout, type: web, description: Address, slot and payment }
+    calls:
+      - { to: orders-api, via: http, what: places orders and reads their status }
+      - { to: stripe, via: sdk, what: confirms card payments }
+
+  - id: mobile-app
+    name: Mobile app
+    repo: bramble/mobile
+    kind: mobile app
+    description: The customer app. Same shop as the web, plus live courier tracking.
+    status: built (tracking on a branch)
+    exposes:
+      - { name: Live tracking map, type: screen, description: Courier position on a map (branch) }
+    calls:
+      - { to: orders-api, via: http, what: places orders }
+      - { to: dispatch, via: websocket, what: streams courier position, status: branch }
+
+  - id: orders-api
+    name: Orders API
+    repo: bramble/orders
+    kind: http service
+    description: Takes orders, prices them and records payment. The source of truth for an order.
+    runsAs: container behind the load balancer
+    status: built
+    exposes:
+      - { name: POST /orders, type: rest, description: Place an order }
+      - { name: GET /orders/:id, type: rest, description: Order status }
+      - { name: POST /webhooks/stripe, type: webhook, description: Payment events from Stripe }
+    calls:
+      - { to: order-events, via: queue, what: publishes order.paid }
+
+  - id: orders-worker
+    name: Orders worker
+    repo: bramble/orders
+    kind: worker
+    description: Background jobs for orders. Sends receipts and expires unpaid carts.
+    status: built
+    calls:
+      - { to: order-events, via: queue, what: consumes order.paid }
+      - { to: postmark, via: sdk, what: sends receipts }
+
+  - id: dispatch
+    name: Dispatch
+    repo: bramble/dispatch
+    kind: http service
+    description: Assigns each paid order to the nearest free courier and tracks the drop-off.
+    status: built
+    exposes:
+      - { name: Courier app API, type: rest, description: Couriers accept jobs and post their position }
+      - { name: Tracking socket, type: websocket, description: Pushes courier position to customers (branch) }
+    calls:
+      - { to: order-events, via: queue, what: consumes order.paid }
+      - { to: orders-api, via: http, what: marks orders delivered }
+      - { to: mapbox, via: sdk, what: routes and travel times }
+      - { to: twilio, via: sdk, what: texts the customer when the courier is close, status: planned }
+
+  - id: care
+    name: Plant care
+    repo: bramble/care
+    kind: worker
+    description: Sends watering and repotting reminders for plants a customer bought.
+    status: { state: branch, note: "Open PR; behind a feature flag" }
+    calls:
+      - { to: order-events, via: queue, what: consumes order.delivered, status: branch }
+      - { to: postmark, via: sdk, what: sends reminder emails, status: branch }
+      - { to: plant-db, via: http, what: looks up care schedules, status: proposed, confidence: low }
+
+datastores:
+  - id: orders-db
+    name: Orders DB
+    kind: postgres
+    description: Orders, line items and payments.
+    usedBy:
+      - { service: orders-api, access: write }
+      - { service: orders-worker, access: read }
+  - id: dispatch-db
+    name: Dispatch DB
+    kind: postgres
+    description: Couriers, assignments and delivery events.
+    usedBy:
+      - { service: dispatch, access: write }
+  - id: order-events
+    name: Order events
+    kind: queue
+    description: Topic for order lifecycle events (order.paid, order.delivered).
+  - id: care-cache
+    name: Care cache
+    kind: redis
+    description: Caches care schedules per plant.
+    status: proposed
+    usedBy:
+      - { service: care, access: read, confidence: low }
+
+external:
+  - id: stripe
+    name: Stripe
+    description: Card payments.
+    usedBy: [orders-api]
+  - id: postmark
+    name: Postmark
+    description: Transactional email.
+  - id: mapbox
+    name: Mapbox
+    description: Maps, routing and travel-time estimates.
+  - id: twilio
+    name: Twilio
+    description: SMS to customers.
+    status: planned
+  - id: plant-db
+    name: Plant database
+    description: A third-party plant-care data API. Vendor not chosen yet.
+    status: proposed
+    confidence: low
+
+sharedLibs:
+  - name: contracts
+    repo: bramble/contracts
+    description: Shared types and the event schemas every service validates against.
+    usedBy: [storefront, mobile-app, orders-api, orders-worker, dispatch, care]
+
+flows:
+  - id: place-order
+    name: Place an order
+    description: A customer buys a plant on the web and gets a receipt.
+    steps:
+      - { from: storefront, to: orders-api, via: http, what: POST /orders with the cart }
+      - { from: storefront, to: stripe, via: sdk, what: confirms the card payment }
+      - { from: stripe, to: orders-api, via: webhook, what: payment_intent.succeeded }
+      - { from: orders-api, to: order-events, via: queue, what: publishes order.paid }
+      - { from: order-events, to: orders-worker, via: queue, what: receipt job picks it up }
+      - { from: orders-worker, to: postmark, via: sdk, what: emails the receipt }
+  - id: deliver
+    name: Deliver an order
+    description: Dispatch hands a paid order to a courier and the customer watches it arrive.
+    status: tracking is on a branch
+    steps:
+      - { from: order-events, to: dispatch, via: queue, what: dispatch hears order.paid }
+      - { from: dispatch, to: mapbox, via: sdk, what: picks the nearest courier }
+      - { from: dispatch, to: mobile-app, via: websocket, what: streams courier position, status: branch }
+      - { from: dispatch, to: twilio, via: sdk, what: texts "arriving in 5 minutes", status: planned }
+      - { from: dispatch, to: orders-api, via: http, what: marks the order delivered }
+  - id: care-reminders
+    name: Care reminders
+    description: After delivery, the customer gets reminders to water and repot.
+    status: proposed
+    steps:
+      - { from: order-events, to: care, via: queue, what: care hears order.delivered, status: branch }
+      - { from: care, to: plant-db, via: http, what: looks up the plant's schedule, status: proposed, confidence: low }
+      - { from: care, to: postmark, via: sdk, what: sends the reminder email, status: branch }

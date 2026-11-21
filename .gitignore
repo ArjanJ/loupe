@@ -1,0 +1,9 @@
+# repos you scan are cloned here and never committed
+input/
+.loupe-cache/
+node_modules
+*.log
+.DS_Store
+# private maps: keep anything generated from a non-public system out of the repo
+private/
+maps/

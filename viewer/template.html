@@ -1,0 +1,2255 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Loupe</title>
+<script>
+// Appearance: System / Light / Dark, remembered per browser. Runs before first paint so nothing flashes.
+(function () {
+  var pref = 'system';
+  try { var v = localStorage.getItem('loupe.appearance'); if (v === 'light' || v === 'dark') pref = v; } catch (e) {}
+  var dark = pref === 'dark' || (pref === 'system' && !!window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
+  var el = document.documentElement;
+  el.setAttribute('data-theme', dark ? 'dark' : 'light'); el.setAttribute('data-pref', pref); el.style.colorScheme = dark ? 'dark' : 'light';
+})();
+</script>
+<style>
+  /*__FONTS__*/
+  :root {
+    --bg: #f5f5f7;
+    --label: #1d1d1f; --label-2: rgba(60,60,67,.76); --label-3: rgba(60,60,67,.6);
+    --glass: rgba(255,255,255,.72); --glass-solid: rgba(250,250,252,.96); --glass-edge: rgba(0,0,0,.08); --glass-hi: rgba(255,255,255,.9);
+    --glass-shadow: 0 0 0 .5px rgba(0,0,0,.06), 0 2px 6px rgba(0,0,0,.05), 0 12px 32px rgba(0,0,0,.10);
+    --seg-bg: rgba(118,118,128,.12); --seg-on: #fff; --seg-on-shadow: 0 1px 2px rgba(0,0,0,.10), 0 0 0 .5px rgba(0,0,0,.04);
+    --press: rgba(118,118,128,.14); --focus: #007aff; --flow: #007aff; --link: #0066cc;
+    --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Inter", system-ui, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, "JetBrains Mono", Consolas, monospace;
+  }
+  /* macOS-style dark: elevated greys, never pure black; label alphas raised so every text style clears WCAG AA (4.5:1) */
+  :root[data-theme="dark"] {
+    --bg: #161618;
+    --label: #f5f5f7; --label-2: rgba(235,235,245,.72); --label-3: rgba(235,235,245,.56);
+    --glass: rgba(40,40,42,.76); --glass-solid: rgba(38,38,40,.97); --glass-edge: rgba(255,255,255,.10); --glass-hi: rgba(255,255,255,.06);
+    --glass-shadow: 0 0 0 .5px rgba(255,255,255,.10), inset 0 .5px 0 rgba(255,255,255,.06), 0 2px 6px rgba(0,0,0,.32), 0 12px 32px rgba(0,0,0,.5);
+    --seg-bg: rgba(118,118,128,.24); --seg-on: #636366; --seg-on-shadow: 0 1px 2px rgba(0,0,0,.35), inset 0 .5px 0 rgba(255,255,255,.08);
+    --press: rgba(118,118,128,.28); --focus: #0a84ff; --flow: #0a84ff; --link: #409cff;
+  }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--label);
+    font: 13px/1.38 var(--sans); letter-spacing: -0.006em; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+  .grid { position: fixed; inset: 0; pointer-events: none; background-repeat: repeat; }
+  canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; touch-action: none; cursor: default; outline: none; }
+  canvas.dragging { cursor: grabbing; }
+  canvas:focus-visible { box-shadow: inset 0 0 0 3px color-mix(in srgb, var(--focus) 55%, transparent); }
+  button { -webkit-tap-highlight-color: transparent; }
+  button:focus-visible { outline: 3px solid color-mix(in srgb, var(--focus) 55%, transparent); outline-offset: 1px; }
+
+  /* floating glass capsule */
+  #hud { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); height: 48px; box-sizing: border-box;
+    max-width: calc(100vw - 48px); display: flex; align-items: center; gap: 8px; padding: 0 6px 0 16px;
+    background: var(--glass); border-radius: 24px; box-shadow: var(--glass-shadow);
+    -webkit-backdrop-filter: blur(24px) saturate(180%); backdrop-filter: blur(24px) saturate(180%); user-select: none; }
+  #crumbs { display: flex; align-items: center; min-width: 0; overflow: hidden; white-space: nowrap; font-size: 13px; }
+  #crumbs button { font: inherit; letter-spacing: inherit; color: var(--label-2); background: none; border: 0; padding: 4px 6px; border-radius: 8px;
+    cursor: pointer; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transition: background-color .15s, color .15s; }
+  #crumbs button:hover { color: var(--label); background: var(--press); }
+  #crumbs button[aria-current="location"] { color: var(--label); font-weight: 600; }
+  #crumbs .sep { width: 12px; height: 12px; flex: none; color: var(--label-3); }
+  .divider { width: 1px; height: 20px; background: var(--glass-edge); margin: 0 4px; flex: none; }
+  #seg { position: relative; display: flex; padding: 2px; border-radius: 9px; background: var(--seg-bg); flex: none; }
+  #seg .thumb { position: absolute; top: 2px; bottom: 2px; left: 2px; border-radius: 7px; background: var(--seg-on); box-shadow: var(--seg-on-shadow);
+    transition: transform .38s cubic-bezier(.32,.72,0,1), width .38s cubic-bezier(.32,.72,0,1); }
+  #seg button { position: relative; font: 500 12px var(--sans); letter-spacing: -0.01em; color: var(--label-2); background: none; border: 0;
+    padding: 0 12px; height: 28px; border-radius: 7px; cursor: pointer; transition: color .2s; }
+  #seg button[aria-pressed="true"] { color: var(--label); font-weight: 600; }
+  .icon { width: 32px; height: 32px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 16px;
+    background: none; color: var(--label); opacity: .78; cursor: pointer; flex: none; transition: background-color .15s, opacity .15s; }
+  .icon:hover { background: var(--press); opacity: 1; }
+  .icon:active { transform: scale(.94); }
+
+  #toast { position: fixed; left: 50%; bottom: 84px; transform: translate(-50%, 6px); padding: 6px 12px; border-radius: 14px; font: 500 12px var(--sans);
+    color: var(--label); background: var(--glass); box-shadow: var(--glass-shadow); -webkit-backdrop-filter: blur(24px) saturate(180%); backdrop-filter: blur(24px) saturate(180%);
+    opacity: 0; pointer-events: none; transition: opacity .2s ease, transform .3s cubic-bezier(.32,.72,0,1); white-space: nowrap; }
+  #toast.on { opacity: 1; transform: translate(-50%, 0); }
+  #themeBtn svg { transition: transform .35s cubic-bezier(.32,.72,0,1), opacity .2s; }
+  #themeBtn:active svg { transform: rotate(-30deg) scale(.92); }
+  #hint { position: fixed; left: 50%; bottom: 84px; transform: translateX(-50%); font-size: 12px; color: var(--label-3);
+    pointer-events: none; transition: opacity .6s ease; white-space: nowrap; letter-spacing: -0.003em; }
+  #hint.gone { opacity: 0; }
+
+  #tip { position: fixed; pointer-events: none; max-width: 300px; padding: 10px 12px; display: block; opacity: 0; box-sizing: border-box;
+    background: var(--glass); border-radius: 12px; box-shadow: var(--glass-shadow); transition: opacity .18s ease;
+    -webkit-backdrop-filter: blur(24px) saturate(180%); backdrop-filter: blur(24px) saturate(180%); }
+  #tip.on { opacity: 1; }
+  #tipLabel { font-size: 13px; font-weight: 600; color: var(--label); letter-spacing: -0.01em; }
+  #tipDesc { font-size: 12px; color: var(--label-2); margin-top: 2px; }
+  #tipPath { font: 11px var(--mono); color: var(--label-3); margin-top: 6px; word-break: break-all; }
+  .pill { height: 32px; padding: 0 12px; border: 0; border-radius: 16px; background: none; color: var(--label); font: 500 13px var(--sans);
+    letter-spacing: -0.01em; cursor: pointer; display: inline-flex; align-items: center; gap: 7px; flex: none; max-width: 220px; transition: background-color .15s; }
+  .pill span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pill:hover, .pill[aria-expanded="true"], .icon[aria-expanded="true"] { background: var(--press); opacity: 1; }
+  .pill .dot { width: 7px; height: 7px; border-radius: 4px; background: var(--flow); display: none; flex: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--flow) 22%, transparent); }
+  .pill.active .dot { display: block; }
+  .glass { background: var(--glass); box-shadow: var(--glass-shadow); }
+  /* blur only while shown: a hidden backdrop-filter layer still costs a full composite every frame */
+  .glass.on { -webkit-backdrop-filter: blur(24px) saturate(180%); backdrop-filter: blur(24px) saturate(180%); transition: opacity .2s ease, transform .3s cubic-bezier(.32,.72,0,1), background-color .2s; }
+  /* while the camera moves the side panels drop the live blur for a near-opaque fill (same look, no per-frame re-blur) */
+  body.moving .glass.on { -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--glass-solid); }
+  #pop:not(.on), #insp:not(.on) { visibility: hidden; transition: opacity .18s ease, transform .26s cubic-bezier(.32,.72,0,1), visibility 0s linear .26s; }
+  #pop { position: fixed; bottom: 82px; left: 0; width: 344px; max-height: min(62vh, 540px); overflow: auto; border-radius: 18px; padding: 6px; box-sizing: border-box;
+    opacity: 0; transform: translateY(8px) scale(.98); transform-origin: 50% 100%; pointer-events: none; overscroll-behavior: contain;
+    transition: opacity .18s ease, transform .26s cubic-bezier(.32,.72,0,1); }
+  #pop.on, #insp.on { opacity: 1; transform: none; pointer-events: auto; }
+  .pop-h { display: flex; align-items: center; gap: 6px; font: 600 15px var(--sans); letter-spacing: -0.015em; color: var(--label); padding: 10px 10px 2px; }
+  .pop-h .back { width: 26px; height: 26px; margin-left: -4px; }
+  .pop-sub { font-size: 12px; color: var(--label-2); padding: 2px 10px 8px; }
+  .pop-foot { font-size: 11.5px; color: var(--label-3); padding: 8px 10px 4px; border-top: .5px solid var(--glass-edge); margin-top: 6px; }
+  .row { display: flex; gap: 10px; align-items: flex-start; width: 100%; box-sizing: border-box; text-align: left; border: 0; background: none; padding: 8px 10px;
+    border-radius: 11px; color: var(--label); font: inherit; letter-spacing: inherit; cursor: pointer; transition: background-color .15s; }
+  .row:hover { background: var(--press); }
+  .rb { min-width: 0; flex: 1; }
+  .rt { display: flex; align-items: baseline; gap: 8px; }
+  .row .t, .legend-row .t { font: 600 13px var(--sans); letter-spacing: -0.01em; color: var(--label); }
+  .row .d, .legend-row .d { font-size: 12px; color: var(--label-2); margin-top: 1px; }
+  .cnt { margin-left: auto; font: 500 11px var(--sans); color: var(--label-3); flex: none; font-variant-numeric: tabular-nums; }
+  .num { flex: none; width: 20px; height: 20px; border-radius: 10px; box-sizing: border-box; border: 1.5px solid var(--flow); color: var(--link);
+    font: 600 11px/17px var(--sans); text-align: center; transition: background-color .2s, color .2s; }
+  .row.cur { background: color-mix(in srgb, var(--flow) 10%, transparent); }
+  .row.cur .num { background: var(--flow); color: #fff; }
+  .insp-status { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; padding: 0 16px 8px; }
+  .stag { font: 600 10.5px/16px var(--sans); padding: 0 7px; border-radius: 8px; background: var(--seg-bg); color: var(--label-2); white-space: nowrap; }
+  .stag.dash { background: transparent; box-shadow: inset 0 0 0 1px var(--label-3); }
+  .insp-note { flex-basis: 100%; font-size: 12px; line-height: 1.4; color: var(--label-2); margin-top: 3px; }
+  .tag { font: 500 10px var(--sans); color: var(--label-3); border: .5px solid var(--label-3); border-radius: 5px; padding: 0 4px; margin-left: 6px; vertical-align: 1px; }
+  .legend-row { display: flex; align-items: center; gap: 12px; padding: 7px 10px; }
+  .legend-row { align-items: center; padding: 6px 10px; }
+  .legend-row .ck { width: 16px; height: 16px; flex: none; color: var(--link); }
+  .legend-row .ck svg { width: 16px; height: 16px; }
+  .legend-row[aria-checked="false"] .ck { visibility: hidden; }
+  .legend-row[aria-checked="false"] canvas, .legend-row[aria-checked="false"] .lt { opacity: .4; }
+  #pop canvas, #insp canvas { position: static; inset: auto; display: block; flex: none; }
+  .lt { min-width: 0; }
+  .toggle { align-items: center; margin-top: 2px; }
+  .toggle .t { font-weight: 500; flex: 1; }
+  .toggle .sw { flex: none; width: 38px; height: 23px; border-radius: 12px; background: var(--seg-bg); position: relative; transition: background-color .2s; }
+  .toggle .sw::after { content: ''; position: absolute; top: 2px; left: 2px; width: 19px; height: 19px; border-radius: 10px; background: #fff;
+    box-shadow: 0 1px 3px rgba(0,0,0,.2); transition: transform .25s cubic-bezier(.32,.72,0,1); }
+  .toggle[aria-checked="true"] .sw { background: var(--focus); }
+  .toggle[aria-checked="true"] .sw::after { transform: translateX(15px); }
+  #insp { position: fixed; top: 16px; right: 16px; width: 344px; max-height: calc(100vh - 112px); overflow: hidden; border-radius: 18px; padding: 4px 6px 8px;
+    box-sizing: border-box; opacity: 0; transform: translateX(10px); pointer-events: none; overscroll-behavior: contain;
+    transition: opacity .2s ease, transform .3s cubic-bezier(.32,.72,0,1); }
+  .insp-head { display: flex; gap: 8px; align-items: flex-start; padding: 10px 4px 4px 10px; }
+  .insp-ttl { min-width: 0; flex: 1; }
+  .transport { display: flex; align-items: center; gap: 2px; margin: 0 6px 6px; padding: 3px; border-radius: 12px; background: var(--seg-bg); }
+  .transport .icon { width: 30px; height: 30px; opacity: .85; }
+  .transport .pos { margin-left: auto; padding-right: 10px; font: 500 12px var(--sans); color: var(--label-2); font-variant-numeric: tabular-nums; }
+  .insp-kicker { font: 600 11px var(--sans); color: var(--link); letter-spacing: .02em; text-transform: uppercase; margin-bottom: 1px; }
+  .insp-title { font: 600 17px var(--sans); letter-spacing: -0.02em; color: var(--label); }
+  .insp-path { font: 11px var(--mono); color: var(--label-3); margin-top: 2px; word-break: break-all; }
+  .close { width: 26px; height: 26px; background: var(--seg-bg); opacity: .7; }
+  .iseg { display: flex; margin: 6px 10px 4px; padding: 2px; border-radius: 9px; background: var(--seg-bg); }
+  .iseg button { flex: 1; height: 28px; border: 0; border-radius: 7px; background: none; color: var(--label-2); font: 500 12px var(--sans); letter-spacing: -0.01em;
+    cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px; transition: background-color .2s, color .2s; }
+  .iseg button[aria-selected="true"] { background: var(--seg-on); box-shadow: var(--seg-on-shadow); color: var(--label); font-weight: 600; }
+  .iseg .sn { font-weight: 500; color: var(--label-3); font-variant-numeric: tabular-nums; }
+  .insp-body { overflow: auto; max-height: calc(100vh - 240px); padding-bottom: 20px; overscroll-behavior: contain;
+    -webkit-mask-image: linear-gradient(#000 calc(100% - 24px), transparent); mask-image: linear-gradient(#000 calc(100% - 24px), transparent); }
+  .irow { padding: 0 0 4px; }
+  .irow .row { padding: 8px 10px 2px; }
+  .cap { margin-left: auto; flex: none; font: 600 11px/18px var(--sans); color: var(--label-2); background: var(--seg-bg); border-radius: 9px; padding: 0 7px; font-variant-numeric: tabular-nums; }
+  .disc { display: inline-flex; align-items: center; gap: 2px; margin: 0 0 2px 6px; padding: 2px 6px 2px 2px; border: 0; background: none; border-radius: 6px;
+    font: 500 11px var(--sans); color: var(--link); cursor: pointer; }
+  .disc:hover { background: var(--press); }
+  .disc svg { width: 12px; height: 12px; transition: transform .2s; }
+  .disc[aria-expanded="true"] svg { transform: rotate(90deg); }
+  .sec { display: flex; align-items: baseline; gap: 6px; font: 600 13px var(--sans); color: var(--label-2); padding: 14px 10px 2px; }
+  .sec-n { font-weight: 500; color: var(--label-3); }
+  .kindh { display: flex; align-items: center; gap: 8px; padding: 8px 10px 0; font: 600 11px var(--sans); color: var(--label-2); letter-spacing: .01em; }
+  .kindh .kd { font-weight: 400; color: var(--label-3); }
+  .irow { padding: 6px 10px; }
+  .ev { display: flex; gap: 8px; font: 11.5px/1.55 var(--mono); color: var(--label-2); white-space: nowrap; overflow: hidden; padding: 0 10px 0 26px; }
+  .evf { color: var(--label-2); flex: none; }
+  .evs { overflow: hidden; text-overflow: ellipsis; }
+  .empty-note { font-size: 12px; color: var(--label-3); padding: 12px 10px; }
+  #empty { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; text-align: center;
+    color: var(--label-2); padding: 24px; }
+  #empty code { color: var(--label); font-family: var(--mono); }
+</style>
+</head>
+<body>
+<div id="grid0" class="grid" aria-hidden="true"></div><div id="grid1" class="grid" aria-hidden="true"></div>
+<canvas id="c" tabindex="0" aria-label="Architecture map. Scroll or pinch to zoom, drag or arrow keys to pan, Escape to zoom out one level."></canvas>
+<div id="hud" role="toolbar" aria-label="Map controls">
+  <nav id="crumbs" aria-label="Breadcrumb"></nav>
+  <span class="divider" aria-hidden="true"></span>
+  <div id="seg" role="group" aria-label="Detail level"><span class="thumb" aria-hidden="true"></span></div>
+  <span class="divider" aria-hidden="true"></span>
+  <button class="pill" id="flowsBtn" type="button" aria-haspopup="dialog" aria-expanded="false" title="End-to-end flows"><i class="dot" aria-hidden="true"></i><span id="flowsLabel">Flows</span></button>
+  <button class="icon" id="themeBtn" type="button" title="Appearance" aria-label="Appearance"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"></svg></button>
+  <button class="icon" id="legendBtn" type="button" title="Legend" aria-label="Legend" aria-haspopup="dialog" aria-expanded="false">
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M3 5h12"/><path d="M3 9h12" stroke-dasharray="3 2.6"/><path d="M3 13h12" stroke-dasharray="0.01 3.2" stroke-width="2.2"/></svg>
+  </button>
+  <span class="divider" aria-hidden="true"></span>
+  <button class="icon" id="zoomOut" type="button" title="Zoom out (−)" aria-label="Zoom out">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3.5 8h9"/></svg>
+  </button>
+  <button class="icon" id="zoomIn" type="button" title="Zoom in (+)" aria-label="Zoom in">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3.5 8h9M8 3.5v9"/></svg>
+  </button>
+  <button class="icon" id="fit" type="button" title="Show everything (0)" aria-label="Show everything">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5 9.2 6.8M2.5 13.5l4.3-4.3"/></svg>
+  </button>
+</div>
+<div id="pop" class="glass" role="dialog" aria-hidden="true"></div>
+<aside id="insp" class="glass" aria-label="Relationships" aria-hidden="true"></aside>
+<div id="toast" role="status" aria-live="polite"></div>
+<div id="hint">Scroll or pinch to zoom in · Drag to pan</div>
+<div id="tip" aria-hidden="true"><div id="tipLabel"></div><div id="tipDesc"></div><div id="tipPath"></div></div>
+<div id="empty"><div>No tree is inlined in this file.<br>Build it with <code>loupe render &lt;tree.json&gt; [out.html]</code>.</div></div>
+<script>
+'use strict';
+const DATA = /*__ZOOM_TREE__*/null;
+
+(() => {
+  // ---------------------------------------------------------------- tuning
+  const WORLD_W = 1600, WORLD_H = 1000;
+  const OPEN_START = 0.5, OPEN_END = 0.8;   // a card opens as max(screenW / viewportW, screenH / viewportH) goes START -> END
+  const FOCUS_FILL = 0.6;                   // focused group = deepest open box filling at least this much of the viewport
+  const CARD_FADE_END = 0.4, CHILD_FADE_START = 0.3, CHILD_FADE_END = 0.75; // card content fades out first, then children fade in
+  const ASPECT = WORLD_W / WORLD_H;         // children are laid out roughly screen-shaped
+  const HOME_ZOOM = 0.42;                   // first screen: one closed root card (relative to fit-root)
+  const PAD = 16, GAP = 16, HEADER = 44;    // group padding / gap between cards / group title band, screen px (8pt grid)
+  const MIN_DRAW_PX = 2;
+  const MIN_TEXT_PX = 11;                   // never render text smaller than this
+  const MIN_ZOOM = 0.3;                     // relative to fit-root scale; the max is computed (see maxScale)
+  const WHEEL_K = 0.0015, PINCH_K = 0.01;
+  const SMOOTH_RATE = 16;                   // 1/s, exponential approach of camera to wheel target
+  const FLY_MS = 720;                       // spring camera moves (double-click, Fit, breadcrumb)
+  const HOVER_MS = 160;
+  const MIN_WEIGHT_FRAC = 0.04;
+  const MAX_TEXT_W = 520;                   // measure (line length) cap for card text, content px
+
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  const $ = (id) => document.getElementById(id);
+  const hasLetterSpacing = 'letterSpacing' in ctx;
+
+  // ---------------------------------------------------------------- themes (light is the hero)
+  const THEMES = {
+    light: {
+      bg: '#f5f5f7', dot: 'rgba(0,0,0,0.075)',
+      card: '#ffffff', cardHair: 'rgba(0,0,0,0.06)',
+      shadowNear: 'rgba(0,0,0,0.06)', shadowFar: 'rgba(0,0,0,0.075)',
+      group: 'rgba(118,118,128,0.075)', groupHair: 'rgba(0,0,0,0.035)',
+      quiet: 'rgba(118,118,128,0.08)',
+      label: '#1d1d1f', label2: 'rgba(60,60,67,0.76)', label3: 'rgba(60,60,67,0.6)',
+      chip: 'rgba(118,118,128,0.10)', arrow: 'rgba(60,60,67,0.42)', rootTile: '#1d1d1f',
+      edge: 'rgba(60,60,67,0.52)', flow: '#007aff', extTint: '#8e8e93', pill: '#ffffff', pillHair: 'rgba(0,0,0,0.06)', link: '#0066cc', cardTop: null, dim: 0.6,
+      tints: ['#007aff', '#5856d6', '#30b0c7', '#ff9500', '#ff2d55', '#34c759'],
+    },
+    dark: {
+      bg: '#161618', dot: 'rgba(255,255,255,0.085)',
+      card: '#2c2c2e', cardHair: 'rgba(255,255,255,0.10)', cardTop: 'rgba(255,255,255,0.05)',
+      shadowNear: 'rgba(0,0,0,0.4)', shadowFar: 'rgba(0,0,0,0.42)',
+      group: 'rgba(118,118,128,0.11)', groupHair: 'rgba(255,255,255,0.05)',
+      quiet: 'rgba(118,118,128,0.16)',
+      label: '#f5f5f7', label2: 'rgba(235,235,245,0.72)', label3: 'rgba(235,235,245,0.56)',
+      chip: 'rgba(118,118,128,0.24)', arrow: 'rgba(235,235,245,0.42)', rootTile: '#636366',
+      edge: 'rgba(235,235,245,0.6)', flow: '#0a84ff', extTint: '#98989d', pill: '#3a3a3c', pillHair: 'rgba(255,255,255,0.14)', link: '#409cff', dim: 0.6,
+      tints: ['#0a84ff', '#5e5ce6', '#40cbe0', '#ff9f0a', '#ff375f', '#30d158'],
+    },
+  };
+  const darkQuery = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+  // the <head> bootstrap already resolved the appearance; the canvas follows the same attribute
+  let themePref = document.documentElement.getAttribute('data-pref') || 'system';
+  let T = document.documentElement.getAttribute('data-theme') === 'dark' ? THEMES.dark : THEMES.light;
+  const FONT = '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Inter", system-ui, "Segoe UI", Roboto, sans-serif';
+  const MONO = 'ui-monospace, "SF Mono", SFMono-Regular, Menlo, "JetBrains Mono", Consolas, monospace';
+
+  if (!DATA || !DATA.root) {
+    $('empty').style.display = 'flex';
+    $('hud').style.display = 'none'; $('hint').style.display = 'none';
+    window.__sz = { setCamera() {}, fitNode() {}, camera: null, nodes: [] };
+    return;
+  }
+
+  const own = (o, k) => !!o && Object.prototype.hasOwnProperty.call(o, k);
+  // ---------------------------------------------------------------- model + layout (once)
+  const nodes = [];
+  const byId = new Map();
+  function index(n, parent, depth) {
+    n.parent = parent; n.depth = depth; n.children = Array.isArray(n.children) ? n.children.filter((c) => c && typeof c === 'object') : [];
+    n.edges = Array.isArray(n.edges) ? n.edges : [];
+    n.quiet = typeof n.id === 'string' && n.id.startsWith('more:'); // "+N more files"
+    nodes.push(n); byId.set(n.id, n);
+    for (const c of n.children) index(c, n, depth + 1);
+  }
+  index(DATA.root, null, 0);
+  const maxDepth = nodes.reduce((m, n) => Math.max(m, n.depth), 0);
+  const levels = Math.max(DATA.meta?.levels || 0, maxDepth + 1);
+
+  function worst(row, side) {
+    let s = 0, mx = -Infinity, mn = Infinity;
+    for (const r of row) { s += r.a; if (r.a > mx) mx = r.a; if (r.a < mn) mn = r.a; }
+    const s2 = side * side;
+    return Math.max((s2 * mx) / (s * s), (s * s) / (s2 * mn));
+  }
+  function squarify(items, x, y, w, h) {
+    const total = items.reduce((s, i) => s + i.v, 0) || 1;
+    const list = items.map((i) => ({ ...i, a: (i.v / total) * w * h })).sort((p, q) => q.a - p.a);
+    const out = [];
+    let row = [];
+    const flush = () => {
+      if (!row.length) return;
+      const s = row.reduce((t, r) => t + r.a, 0);
+      if (w >= h) {
+        const rw = s / h; let yy = y;
+        for (const r of row) { const rh = r.a / rw; out.push({ n: r.n, x, y: yy, w: rw, h: rh }); yy += rh; }
+        x += rw; w -= rw;
+      } else {
+        const rh = s / w; let xx = x;
+        for (const r of row) { const rw = r.a / rh; out.push({ n: r.n, x: xx, y, w: rw, h: rh }); xx += rw; }
+        y += rh; h -= rh;
+      }
+      row = [];
+    };
+    let i = 0;
+    while (i < list.length) {
+      const side = Math.min(w, h);
+      const c = list[i];
+      if (!row.length || worst(row.concat(c), side) <= worst(row, side)) { row.push(c); i++; }
+      else flush();
+    }
+    flush();
+    return out;
+  }
+  // World layout: children tile the parent exactly (normalized positions). Padding, title band and gaps are applied
+  // in screen px at draw time, so spacing stays constant while zooming and the layout never reshuffles.
+  function layout(n, x, y, w, h) {
+    n.x = x; n.y = y; n.w = w; n.h = h;
+    if (!n.children.length) return;
+    const vals = n.children.map((c) => Math.sqrt(Math.max(0, +c.weight || 0)));
+    const vmax = Math.max(1e-9, ...vals);
+    const items = n.children.map((c, k) => ({ n: c, v: Math.max(vals[k], vmax * MIN_WEIGHT_FRAC) * (c.quiet ? 0.6 : 1) }));
+    for (const q of squarify(items, 0, 0, w / ASPECT, h)) layout(q.n, x + q.x * ASPECT, y + q.y, q.w * ASPECT, q.h);
+  }
+  layout(DATA.root, 0, 0, WORLD_W, WORLD_H);
+  document.title = String(DATA.root.label ?? 'Diagram') + ' · Loupe';
+
+  const tops = DATA.root.children;
+  let ti = 0;
+  tops.forEach((t) => { t.tintIndex = t.external === true ? -2 : ti++; });
+  for (const n of nodes) {
+    let a = n; while (a.parent && a.parent !== DATA.root) a = a.parent;
+    n.tintIndex = n === DATA.root ? -1 : a.tintIndex;
+    n.radius = [22, 20, 16, 14][Math.min(n.depth, 3)];
+    const kids = n.children.filter((c) => !c.quiet).length + n.children.filter((c) => c.quiet).reduce((s, c) => s + (parseInt(String(c.label).replace(/\D+/g, ''), 10) || 0), 0);
+    const childKind = n.children[0]?.kind;
+    n.meta = n.children.length ? `${kids} ${({ package: 'packages', module: 'modules', file: 'files', external: 'services', service: 'services', datastore: 'datastores', library: 'libraries', repo: 'repos', endpoint: 'interfaces' })[childKind] || 'items'}` : '';
+  }
+  const tintOf = (n) => (n.tintIndex === -2 ? T.extTint : n.tintIndex < 0 ? T.rootTile : T.tints[n.tintIndex % T.tints.length]);
+  // lifecycle + certainty (system manifests): built | branch | proposed | planned, confidence: low = inferred
+  const STATUS_NAMES = { branch: 'Open branch', proposed: 'Proposed', planned: 'Planned' };
+  const statusOf = (o) => (o && typeof o.status === 'string' && own(STATUS_NAMES, o.status) ? o.status : '');
+  const isInferred = (o) => !!o && o.confidence === 'low';
+  const notBuilt = (o) => { const st = statusOf(o); return st === 'proposed' || st === 'planned'; };
+  function statusTags(o) { const t = []; const st = statusOf(o); if (st) t.push(STATUS_NAMES[st]); if (isInferred(o)) t.push('Inferred'); return t; }
+
+  // ---------------------------------------------------------------- camera
+  let W = 0, H = 0, DPR = 1;
+  const cam = { x: WORLD_W / 2, y: WORLD_H / 2, scale: 1 };
+  let fitScale = 1, maxScale = 100;
+  let wheelAnim = null;
+  let fly = null;
+
+  const clampScale = (s) => Math.min(maxScale, Math.max(fitScale * MIN_ZOOM, s));
+  function clampCenter() {
+    const mx = WORLD_W * 0.5, my = WORLD_H * 0.5;
+    cam.x = Math.min(WORLD_W + mx, Math.max(-mx, cam.x));
+    cam.y = Math.min(WORLD_H + my, Math.max(-my, cam.y));
+  }
+  const toSX = (wx) => (wx - cam.x) * cam.scale + W / 2;
+  const toSY = (wy) => (wy - cam.y) * cam.scale + H / 2;
+  const toWX = (sx) => (sx - W / 2) / cam.scale + cam.x;
+  const toWY = (sy) => (sy - H / 2) / cam.scale + cam.y;
+
+  // Fit a box fully on screen (tall ones too); leave room for the HUD at the bottom.
+  function fitFor(n, margin = 0.86) {
+    let s = Math.min((W * margin) / n.w, ((H - 96) * margin) / n.h);
+    if (!Number.isFinite(s) || s <= 0) s = maxScale;
+    const t = { x: n.x + n.w / 2, y: n.y + n.h / 2, scale: clampScale(s) };
+    // the padded screen rect is not the world rect, so centre what is actually drawn (slightly above the HUD)
+    const saved = { x: cam.x, y: cam.y, scale: cam.scale };
+    Object.assign(cam, t); rectCache = new Map();
+    const r = srect(n);
+    t.x += (r.sx + r.sw / 2 - W / 2) / t.scale; t.y += (r.sy + r.sh / 2 - (H / 2 - 24)) / t.scale;
+    Object.assign(cam, saved); rectCache = new Map();
+    return t;
+  }
+  const homeView = () => ({ x: WORLD_W / 2, y: WORLD_H / 2 + 20 / (fitScale * HOME_ZOOM), scale: fitScale * HOME_ZOOM });
+  const overviewView = () => fitFor(DATA.root, 0.94);
+  // which group a camera would read as focused (same rule as collect())
+  function focusAt(t) {
+    const saved = { x: cam.x, y: cam.y, scale: cam.scale };
+    Object.assign(cam, t); rectCache = new Map();
+    const inside = (r) => W / 2 >= r.sx && W / 2 <= r.sx + r.sw && H / 2 >= r.sy && H / 2 <= r.sy + r.sh;
+    let f = null, n = DATA.root;
+    while (n && n.children.length) { const r = srect(n); if (fillMeasure(r) < FOCUS_FILL || !inside(r)) break; f = n; n = n.children.find((c) => inside(srect(c))); }
+    Object.assign(cam, saved); rectCache = new Map();
+    return f;
+  }
+  // fit a group so that it, not one of its children, becomes the focus: a child that spans the group's full
+  // height would otherwise open with it (and Esc / breadcrumbs could never leave it). Shrinks the margin until it holds.
+  function fitFocus(n) {
+    if (n === DATA.root) return overviewView();
+    const t = fitFor(n);
+    if (!n.children.length) return t;
+    const f = focusAt(t);
+    if (!f || f === n || !within(n, f)) return t;
+    // not monotonic (too far out and the parent takes focus), so walk the margin down: the first hit is the largest view
+    for (let m = 0.84; m >= 0.3; m -= 0.02) { const c = fitFor(n, m); if (focusAt(c) === n) return c; }
+    return t;
+  }
+  function resize() {
+    DPR = window.devicePixelRatio || 1;
+    const oldFit = fitScale, rel = Number.isFinite(cam.scale / oldFit) ? cam.scale / oldFit : 1;
+    W = window.innerWidth; H = window.innerHeight;
+    canvas.width = Math.round(W * DPR); canvas.height = Math.round(H * DPR);
+    fitScale = Math.max(1e-6, Math.min((W * 0.94) / WORLD_W, (H * 0.94) / WORLD_H));
+    // zoom cap: the smallest leaf card can just fill the screen, so deep zoom never shows a giant empty card
+    let need = fitScale * 4;
+    for (const n of nodes) if (!n.children.length && n.w > 0 && n.h > 0) need = Math.max(need, Math.min((W * 0.92) / n.w, ((H - 96) * 0.92) / n.h));
+    maxScale = need;
+    cam.scale = clampScale(rel * fitScale);
+    requestRender();
+  }
+
+  function zoomAt(sx, sy, factor) {
+    fly = null;
+    const curLog = wheelAnim ? wheelAnim.targetLog : Math.log(cam.scale);
+    const targetLog = Math.log(clampScale(Math.exp(curLog) * factor));
+    wheelAnim = { targetLog, ax: sx, ay: sy, wx: toWX(sx), wy: toWY(sy) };
+    requestRender();
+  }
+  function setCam(x, y, s) { cam.scale = clampScale(s); cam.x = x; cam.y = y; clampCenter(); requestRender(); }
+  function flyTo(target, ms = FLY_MS) {
+    wheelAnim = null;
+    target = { ...target, scale: clampScale(target.scale) };
+    fly = { from: { ...cam }, to: target, t0: performance.now(), ms };
+    requestRender();
+  }
+  // critically damped spring response, normalized to reach 1 at t = 1 (no overshoot: it's a camera)
+  const SPRING_W = 8.5, SPRING_END = 1 - (1 + SPRING_W) * Math.exp(-SPRING_W);
+  const spring = (t) => (1 - (1 + SPRING_W * t) * Math.exp(-SPRING_W * t)) / SPRING_END;
+
+  function stepCamera(now, dt) {
+    let moving = false;
+    if (fly) {
+      const u = Math.min(1, (now - fly.t0) / fly.ms), e = spring(u);
+      const a = fly.from, b = fly.to;
+      const s = Math.exp(Math.log(a.scale) + (Math.log(b.scale) - Math.log(a.scale)) * e);
+      const inv0 = 1 / a.scale, inv1 = 1 / b.scale;
+      const k = Math.abs(inv1 - inv0) > 1e-9 * inv0 ? (1 / s - inv0) / (inv1 - inv0) : e;
+      cam.scale = s; cam.x = a.x + (b.x - a.x) * k; cam.y = a.y + (b.y - a.y) * k;
+      if (u >= 1) { cam.x = b.x; cam.y = b.y; cam.scale = b.scale; fly = null; } else moving = true;
+    } else if (wheelAnim) {
+      const cur = Math.log(cam.scale);
+      const diff = wheelAnim.targetLog - cur;
+      const next = Math.abs(diff) < 1e-4 ? wheelAnim.targetLog : cur + diff * (1 - Math.exp(-SMOOTH_RATE * dt));
+      cam.scale = Math.exp(next);
+      cam.x = wheelAnim.wx - (wheelAnim.ax - W / 2) / cam.scale;
+      cam.y = wheelAnim.wy - (wheelAnim.ay - H / 2) / cam.scale;
+      if (next === wheelAnim.targetLog) wheelAnim = null; else moving = true;
+    }
+    clampCenter();
+    return moving;
+  }
+
+  // ---------------------------------------------------------------- render loop (sleeps when idle)
+  let rafId = 0, lastT = 0, dirty = true, bodyMoving = false, movingTimer = 0;
+  function requestRender() { dirty = true; if (!rafId) rafId = requestAnimationFrame(frame); }
+  function frame(now) {
+    rafId = 0;
+    const dt = lastT ? Math.min(0.1, (now - lastT) / 1000) : 1 / 60;
+    lastT = now;
+    const moving = stepCamera(now, dt);
+    if (moving !== bodyMoving) { bodyMoving = moving; if (moving) { clearTimeout(movingTimer); document.body.classList.add('moving'); } else movingTimer = setTimeout(() => { if (!bodyMoving) document.body.classList.remove('moving'); }, 160); }
+    const hovering = stepHover(now);
+    if (dirty || moving || hovering || fading || relAnimating) { dirty = false; render(); }
+    if (moving || hovering || fading || relAnimating) { if (!rafId) rafId = requestAnimationFrame(frame); } else lastT = 0;
+  }
+
+  const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+  const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const fillMeasure = (r) => Math.max(r.sw / W, r.sh / H);
+  const openness = (n, r) => (n.children.length ? smooth(OPEN_START, OPEN_END, fillMeasure(r)) : 0);
+  const childFade = (t) => smooth(CHILD_FADE_START, CHILD_FADE_END, t);
+  const cardFade = (t) => 1 - smooth(0, CARD_FADE_END, t);
+
+  // screen rect of any node (cached per frame)
+  let rectCache = new Map();
+  function srect(n) {
+    let r = rectCache.get(n);
+    if (r) return r;
+    if (!n.parent) r = { sx: toSX(n.x), sy: toSY(n.y), sw: n.w * cam.scale, sh: n.h * cam.scale };
+    else {
+      const p = n.parent, pr = srect(p);
+      const cx = pr.sx + PAD, cy = pr.sy + HEADER, cw = Math.max(0, pr.sw - 2 * PAD), ch = Math.max(0, pr.sh - HEADER - PAD);
+      const u0 = (n.x - p.x) / p.w, v0 = (n.y - p.y) / p.h, u1 = (n.x + n.w - p.x) / p.w, v1 = (n.y + n.h - p.y) / p.h;
+      const g = GAP / 2;
+      const x0 = cx + u0 * cw + g, y0 = cy + v0 * ch + g, x1 = cx + u1 * cw - g, y1 = cy + v1 * ch - g;
+      r = { sx: x0, sy: y0, sw: Math.max(0, x1 - x0), sh: Math.max(0, y1 - y0) };
+    }
+    rectCache.set(n, r);
+    return r;
+  }
+
+  let visible = [];
+  const vis = new Map();
+  let focused = null, focusPath = [];
+  function collect() {
+    rectCache = new Map();
+    visible = []; vis.clear();
+    const walk = (n, alpha) => {
+      const r = srect(n);
+      if (!(r.sw >= MIN_DRAW_PX && r.sh >= MIN_DRAW_PX)) return;
+      if (r.sx > W + 40 || r.sy > H + 40 || r.sx + r.sw < -40 || r.sy + r.sh < -40) return; // margin for shadows
+      const t = openness(n, r);
+      const v = { n, ...r, t, alpha };
+      visible.push(v); vis.set(n, v);
+      if (t > CHILD_FADE_START) for (const c of n.children) walk(c, alpha * childFade(t));
+    };
+    walk(DATA.root, 1);
+    focused = null; focusPath = [];
+    let n = DATA.root;
+    const inside = (r) => W / 2 >= r.sx && W / 2 <= r.sx + r.sw && H / 2 >= r.sy && H / 2 <= r.sy + r.sh;
+    while (n && n.children.length) {
+      const r = srect(n);
+      if (fillMeasure(r) < FOCUS_FILL || !inside(r)) break;
+      focused = n; focusPath.push(n);
+      n = n.children.find((c) => inside(srect(c)));
+    }
+  }
+
+  // ---------------------------------------------------------------- hover / selection
+  let hoverNode = null, hoverFrom = 0, hoverDir = 0, hoverK = 0;
+  let selected = null; // last double-clicked card: keeps its arrows visible
+  function setHover(n) {
+    if (n === hoverNode && hoverDir >= 0) return;
+    if (n) { if (n !== hoverNode) hoverK = 0; hoverNode = n; hoverDir = 1; }
+    else { if (!hoverNode) return; hoverDir = -1; }
+    hoverFrom = performance.now() - (hoverDir > 0 ? hoverK : 1 - hoverK) * HOVER_MS;
+    requestRender();
+  }
+  function stepHover(now) {
+    if (!hoverDir) return false;
+    const u = clamp((now - hoverFrom) / HOVER_MS, 0, 1);
+    hoverK = hoverDir > 0 ? smooth(0, 1, u) : 1 - smooth(0, 1, u);
+    if (u >= 1) { if (hoverDir < 0) hoverNode = null; hoverDir = 0; }
+    return true;
+  }
+
+  // ---------------------------------------------------------------- text helpers
+  // Greedy wrap from cached per-word widths: a zoom changes the width every frame, so re-measuring whole
+  // candidate lines on each cache miss caused frame spikes. Word widths never change for a given font.
+  const wrapCache = new Map(), wordCache = new Map();
+  function wordW(font, w) {
+    const k = font + '|' + w;
+    let v = wordCache.get(k);
+    if (v === undefined) { v = ctx.measureText(w).width; if (wordCache.size > 20000) wordCache.clear(); wordCache.set(k, v); }
+    return v;
+  }
+  function wrap(text, font, width) {
+    const key = font + '|' + Math.floor(width / 2) + '|' + text;
+    let lines = wrapCache.get(key);
+    if (lines) return lines;
+    ctx.font = font;
+    if (hasLetterSpacing) ctx.letterSpacing = '0px';
+    const sp = wordW(font, ' '), lim = Math.floor(width / 2) * 2; // wrap to the bucket floor so a hit never overflows
+    lines = [];
+    for (const para of String(text).split(/\n/)) {
+      let line = '', lw = 0;
+      for (const word of para.split(/\s+/).filter(Boolean)) {
+        const ww = wordW(font, word);
+        if (!line) { line = word; lw = ww; }
+        else if (lw + sp + ww <= lim) { line += ' ' + word; lw += sp + ww; }
+        else { lines.push(line); line = word; lw = ww; }
+      }
+      if (line) lines.push(line);
+    }
+    if (wrapCache.size > 4000) wrapCache.clear();
+    wrapCache.set(key, lines);
+    return lines;
+  }
+  // like CSS text-wrap: balance: same line count, narrowest width, so the last line is never a lone word
+  function wrapBalanced(text, font, width) {
+    const base = wrap(text, font, width);
+    if (base.length < 2) return base;
+    let lo = width * 0.5, hi = width;
+    for (let i = 0; i < 7; i++) { const mid = (lo + hi) / 2; if (wrap(text, font, mid).length <= base.length) hi = mid; else lo = mid; }
+    return wrap(text, font, hi);
+  }
+  // cards: keep the full measure, only avoid a lone last word (balancing a wide card looks ragged)
+  function wrapNoOrphan(text, font, width) {
+    const base = wrap(text, font, width);
+    if (base.length < 2 || base[base.length - 1].includes(' ')) return base;
+    for (let f = 0.96; f >= 0.8; f -= 0.04) {
+      const l = wrap(text, font, width * f);
+      if (l.length === base.length && l[l.length - 1].includes(' ')) return l;
+    }
+    return base;
+  }
+  function ellipsize(text, maxW) {
+    if (maxW <= 0) return '';
+    if (ctx.measureText(text).width <= maxW) return text;
+    let lo = 0, hi = text.length;
+    while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (ctx.measureText(text.slice(0, mid) + '…').width <= maxW) lo = mid; else hi = mid - 1; }
+    return lo > 0 ? text.slice(0, lo) + '…' : '';
+  }
+  const tracking = (fs) => (fs >= 28 ? -0.022 : fs >= 20 ? -0.018 : fs >= 15 ? -0.012 : -0.004) * fs;
+  function setFont(weight, size, family = FONT) {
+    ctx.font = `${weight} ${size.toFixed(2)}px ${family}`;
+    if (hasLetterSpacing) ctx.letterSpacing = family === FONT ? `${tracking(size).toFixed(2)}px` : '0px';
+  }
+
+  // Text is drawn in a local "content" frame: origin (ox, oy) and uniform scale s (big leaf cards scale their whole
+  // block up instead of leaving it tiny in a corner). The checker maps every line back to screen space.
+  const textCheck = { on: false, violations: [], drawn: 0 };
+  let frameT = { ox: 0, oy: 0, s: 1, box: null };
+  function put(text, x, y, maxW, size) {
+    const str = ellipsize(String(text), maxW);
+    if (!str) return 0;
+    ctx.fillText(str, x, y);
+    const w = ctx.measureText(str).width;
+    if (textCheck.on) {
+      const { ox, oy, s, box } = frameT;
+      textCheck.drawn++;
+      const top = ctx.textBaseline === 'middle' ? y - size * 0.6 : y;
+      const X0 = ox + x * s, Y0 = oy + top * s, X1 = ox + (x + w) * s, Y1 = oy + (top + size * 1.2) * s;
+      if (X0 < box.sx - 0.5 || X1 > box.sx + box.sw + 0.5 || Y0 < box.sy - 0.5 || Y1 > box.sy + box.sh + 0.5 || size * s < MIN_TEXT_PX - 0.01)
+        textCheck.violations.push({ id: box.n.id, text: str.slice(0, 40), px: +(size * s).toFixed(1), X0, Y0, X1, Y1 });
+    }
+    return w;
+  }
+
+  // ---------------------------------------------------------------- shapes
+  // continuous-corner ("squircle") rounded rect: each corner is a cubic that starts 1.28r from the corner
+  function squircle(x, y, w, h, r) { squircleOn(ctx, x, y, w, h, r); }
+  function squircleOn(ctx, x, y, w, h, r) {
+    r = Math.max(0, Math.min(r, w / 2 / 1.28, h / 2 / 1.28));
+    const p = r * 1.28, k = p * 0.24;
+    ctx.beginPath();
+    ctx.moveTo(x + p, y);
+    ctx.lineTo(x + w - p, y); ctx.bezierCurveTo(x + w - k, y, x + w, y + k, x + w, y + p);
+    ctx.lineTo(x + w, y + h - p); ctx.bezierCurveTo(x + w, y + h - k, x + w - k, y + h, x + w - p, y + h);
+    ctx.lineTo(x + p, y + h); ctx.bezierCurveTo(x + k, y + h, x, y + h - k, x, y + h - p);
+    ctx.lineTo(x, y + p); ctx.bezierCurveTo(x, y + k, x + k, y, x + p, y);
+    ctx.closePath();
+  }
+  const radiusFor = (v) => Math.min(v.n.radius, 0.18 * Math.min(v.sw, v.sh));
+
+  // SF-Symbols-style glyph on a tinted rounded tile (like macOS settings icons)
+  function glyph(n, x, y, size, alpha) {
+    const tint = tintOf(n);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    squircle(x, y, size, size, size * 0.27);
+    ctx.fillStyle = tint; ctx.fill();
+    ctx.strokeStyle = '#ffffff'; ctx.fillStyle = '#ffffff';
+    ctx.lineWidth = Math.max(1, size * 0.075); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    const c = size / 2, u = size / 20;
+    const X = (v) => x + c + v * u, Y = (v) => y + c + v * u;
+    ctx.beginPath();
+    if (n.external === true) { // cloud
+      ctx.moveTo(X(-4.5), Y(4)); ctx.lineTo(X(4.5), Y(4));
+      ctx.arc(X(4.2), Y(1), 3, Math.PI / 2, -Math.PI / 2, true); ctx.arc(X(0.5), Y(-1.5), 4, -0.15 * Math.PI, -0.95 * Math.PI, true);
+      ctx.arc(X(-4.2), Y(1.2), 2.8, -Math.PI / 2, Math.PI / 2, true);
+    } else if (n.kind === 'external') { // globe
+      ctx.arc(X(0), Y(0), 6 * u, 0, Math.PI * 2); ctx.moveTo(X(-6), Y(0)); ctx.lineTo(X(6), Y(0));
+      ctx.moveTo(X(2.6), Y(0)); ctx.ellipse(X(0), Y(0), 2.6 * u, 6 * u, 0, 0, Math.PI * 2);
+    } else if (n.kind === 'system') { // square.stack.3d.up
+      for (const d of [3.2, 0, -3.2]) { ctx.moveTo(X(-5.5), Y(d)); ctx.lineTo(X(0), Y(d + 2.6)); ctx.lineTo(X(5.5), Y(d)); }
+      ctx.moveTo(X(-5.5), Y(-3.2)); ctx.lineTo(X(0), Y(-5.8)); ctx.lineTo(X(5.5), Y(-3.2));
+    } else if (n.kind === 'package') { // shippingbox
+      ctx.moveTo(X(0), Y(-6)); ctx.lineTo(X(5.6), Y(-3)); ctx.lineTo(X(5.6), Y(3)); ctx.lineTo(X(0), Y(6)); ctx.lineTo(X(-5.6), Y(3)); ctx.lineTo(X(-5.6), Y(-3)); ctx.closePath();
+      ctx.moveTo(X(-5.6), Y(-3)); ctx.lineTo(X(0), Y(0)); ctx.lineTo(X(5.6), Y(-3)); ctx.moveTo(X(0), Y(0)); ctx.lineTo(X(0), Y(6));
+    } else if (n.kind === 'service') { // server.rack
+      for (const d of [-5.2, 0.7]) ctx.roundRect(X(-6), Y(d), 12 * u, 4.5 * u, 1.4 * u);
+      ctx.moveTo(X(3.2), Y(-2.95)); ctx.arc(X(3.2), Y(-2.95), 0.5 * u, 0, Math.PI * 2); ctx.moveTo(X(3.2), Y(2.95)); ctx.arc(X(3.2), Y(2.95), 0.5 * u, 0, Math.PI * 2);
+    } else if (n.kind === 'datastore') { // cylinder
+      ctx.ellipse(X(0), Y(-4), 5.5 * u, 2 * u, 0, 0, Math.PI * 2);
+      ctx.moveTo(X(-5.5), Y(-4)); ctx.lineTo(X(-5.5), Y(4)); ctx.ellipse(X(0), Y(4), 5.5 * u, 2 * u, 0, Math.PI, 0, true); ctx.lineTo(X(5.5), Y(-4));
+      ctx.moveTo(X(-5.5), Y(0)); ctx.ellipse(X(0), Y(0), 5.5 * u, 2 * u, 0, Math.PI, 0, true);
+    } else if (n.kind === 'library') { // books.vertical
+      ctx.roundRect(X(-5.5), Y(-5.5), 4 * u, 11 * u, 1 * u); ctx.roundRect(X(-0.5), Y(-5.5), 4 * u, 11 * u, 1 * u);
+      ctx.moveTo(X(4.6), Y(-4.6)); ctx.lineTo(X(6.4), Y(5.2));
+    } else if (n.kind === 'repo' || n.kind === 'group') { // folder
+      ctx.moveTo(X(-6), Y(-4)); ctx.lineTo(X(-1.6), Y(-4)); ctx.lineTo(X(0), Y(-2.4)); ctx.lineTo(X(6), Y(-2.4)); ctx.lineTo(X(6), Y(5)); ctx.lineTo(X(-6), Y(5)); ctx.closePath();
+    } else if (n.kind === 'endpoint') { // point.3.connected: an interface others plug into
+      ctx.arc(X(-3.5), Y(0), 2.2 * u, 0, Math.PI * 2); ctx.moveTo(X(-1.3), Y(0)); ctx.lineTo(X(5.5), Y(0)); ctx.moveTo(X(3), Y(-2.6)); ctx.lineTo(X(5.6), Y(0)); ctx.lineTo(X(3), Y(2.6));
+    } else if (n.kind === 'module') { // square.grid.2x2
+      for (const [a, b] of [[-5.5, -5.5], [0.8, -5.5], [-5.5, 0.8], [0.8, 0.8]]) ctx.roundRect(X(a), Y(b), 4.7 * u, 4.7 * u, 1.2 * u);
+    } else { // doc.text
+      ctx.moveTo(X(-4.5), Y(-6)); ctx.lineTo(X(1.5), Y(-6)); ctx.lineTo(X(4.5), Y(-3)); ctx.lineTo(X(4.5), Y(6)); ctx.lineTo(X(-4.5), Y(6)); ctx.closePath();
+      ctx.moveTo(X(-2), Y(0)); ctx.lineTo(X(2), Y(0)); ctx.moveTo(X(-2), Y(3)); ctx.lineTo(X(2), Y(3));
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // ---------------------------------------------------------------- background: Freeform-style dot grid
+  // Drawn by the compositor as two CSS background layers behind the (transparent) canvas: a full-screen
+  // pattern fill per frame is the single most expensive thing a software rasteriser does at DPR 2.
+  const gridEls = [document.getElementById('grid0'), document.getElementById('grid1')];
+  const gridState = ['', ''];
+  function drawGrid() {
+    // two octaves anchored to world space; the finer one fades in as it spreads out, so zoom never pops
+    const base = Math.pow(2, Math.ceil(Math.log2(24 / cam.scale)));
+    [[base * 2, 1], [base, smooth(24, 40, base * cam.scale)]].forEach(([step, a], i) => {
+      const sp = step * cam.scale;
+      const ox = toSX(0) - sp / 2, oy = toSY(0) - sp / 2;
+      const st = `${T.dot}|${sp.toFixed(2)}|${ox.toFixed(1)}|${oy.toFixed(1)}|${a.toFixed(2)}`;
+      if (st === gridState[i]) return;
+      gridState[i] = st;
+      const el = gridEls[i].style;
+      el.opacity = a < 0.02 ? '0' : a.toFixed(3);
+      el.backgroundImage = `radial-gradient(circle at center, ${T.dot} 0, ${T.dot} 1px, transparent 1.6px)`;
+      el.backgroundSize = `${sp}px ${sp}px`;
+      el.backgroundPosition = `${ox}px ${oy}px`;
+    });
+  }
+
+  // ---------------------------------------------------------------- boxes
+  // Soft two-layer card shadow, pre-rendered once per corner radius as a 9-slice sprite (shadowBlur per card is slow).
+  const SH_M = 44; // sprite margin around the card (covers blur + offset)
+  const shadowSprites = new Map();
+  function shadowSprite(r) {
+    const key = `${T === THEMES.dark ? 'd' : 'l'}|${DPR}|${r}`;
+    let sp = shadowSprites.get(key);
+    if (sp) return sp;
+    const C = Math.ceil(r * 1.28) + 2, size = 2 * SH_M + 2 * C + 2;
+    const cv = document.createElement('canvas');
+    cv.width = Math.ceil(size * DPR); cv.height = Math.ceil(size * DPR);
+    const g = cv.getContext('2d');
+    g.scale(DPR, DPR);
+    const draw = (blur, oy, color) => {
+      g.save(); g.shadowColor = color; g.shadowBlur = blur * DPR; g.shadowOffsetY = oy * DPR; g.fillStyle = '#000';
+      squircleOn(g, SH_M, SH_M, 2 * C + 2, 2 * C + 2, r); g.fill(); g.restore();
+    };
+    draw(24, 8, T.shadowFar); draw(3, 1, T.shadowNear);
+    // punch out the card itself so translucent cards never show the sprite's black fill
+    g.globalCompositeOperation = 'destination-out'; squircleOn(g, SH_M, SH_M, 2 * C + 2, 2 * C + 2, r); g.fill();
+    sp = { cv, C, size };
+    shadowSprites.set(key, sp);
+    return sp;
+  }
+  function drawShadow(sx, sy, sw, sh, r, alpha) {
+    const sp = shadowSprite(Math.round(r));
+    const { cv, C, size } = sp, k = DPR, M = SH_M;
+    const cx = Math.min(C, sw / 2), cy = Math.min(C, sh / 2);
+    const srcX = [0, M + C, size - M - C, size], srcY = srcX;
+    const dstX = [sx - M, sx + cx, sx + sw - cx, sx + sw + M], dstY = [sy - M, sy + cy, sy + sh - cy, sy + sh + M];
+    ctx.globalAlpha = alpha;
+    for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) {
+      if (i === 1 && j === 1) continue; // centre is hidden under the card
+      const sw2 = srcX[i + 1] - srcX[i], sh2 = srcY[j + 1] - srcY[j], dw = dstX[i + 1] - dstX[i], dh = dstY[j + 1] - dstY[j];
+      if (dw <= 0 || dh <= 0 || sw2 <= 0 || sh2 <= 0) continue;
+      ctx.drawImage(cv, srcX[i] * k, srcY[j] * k, sw2 * k, sh2 * k, dstX[i], dstY[j], dw, dh);
+    }
+  }
+
+  function drawBoxes() {
+    for (const v of visible) {
+      const { n, sx, sy, sw, sh, t, alpha } = v;
+      const r = radiusFor(v);
+      if (n.quiet) { // "+N more files": a flat grey well, no shadow, no border
+        squircle(sx, sy, sw, sh, r); ctx.globalAlpha = alpha; ctx.fillStyle = T.quiet; ctx.fill();
+        continue;
+      }
+      const cardA = alpha * (1 - t) * (t < 0.5 ? dimFactor(n) : 1), groupA = alpha * t;
+      if (groupA > 0.005) { // open: translucent grouped region
+        squircle(sx, sy, sw, sh, r + 4);
+        if (!n.parent) { ctx.globalAlpha = groupA; ctx.fillStyle = T.bg; ctx.fill(); } // the dot grid stays outside
+        ctx.globalAlpha = groupA; ctx.fillStyle = T.group; ctx.fill();
+        if (notBuilt(n)) { ctx.globalAlpha = groupA * 0.8; ctx.lineWidth = 1.25; ctx.strokeStyle = T.label3; ctx.setLineDash([5, 4]); ctx.stroke(); ctx.setLineDash([]); }
+        else { ctx.globalAlpha = groupA; ctx.lineWidth = 1; ctx.strokeStyle = T.groupHair; ctx.stroke(); }
+      }
+      if (cardA > 0.005) { // closed: soft white card lifted by two shadows
+        const lift = n === hoverNode ? hoverK : 0;
+        const ghost = notBuilt(n) ? (statusOf(n) === 'planned' ? 0.5 : 0.66) : 1;
+        if (sw > 12 && sh > 12) drawShadow(sx, sy + 2 * lift, sw, sh, r, cardA * (1 + 0.6 * lift) * (ghost < 1 ? 0.35 : 1));
+        squircle(sx, sy, sw, sh, r);
+        ctx.fillStyle = T.card; ctx.globalAlpha = cardA * ghost; ctx.fill();
+        const tintK = Math.max(lift, 0.45 * (relatedNodes.get(n) || 0), n === selected ? 1 : 0);
+        if (tintK > 0.01) { ctx.globalAlpha = cardA * 0.055 * tintK; ctx.fillStyle = tintOf(n); ctx.fill(); }
+        if (ghost < 1 && sw > 12) { ctx.globalAlpha = cardA * 0.9; ctx.lineWidth = 1.25; ctx.strokeStyle = T.label3; ctx.setLineDash([5, 4]); squircle(sx + 0.75, sy + 0.75, sw - 1.5, sh - 1.5, r); ctx.stroke(); ctx.setLineDash([]); }
+        else if (sw > 12) { ctx.globalAlpha = cardA; ctx.lineWidth = 1; ctx.strokeStyle = T.cardHair; squircle(sx + 0.5, sy + 0.5, sw - 1, sh - 1, r); ctx.stroke(); }
+        if (T.cardTop && sw > 24 && sh > 24) { ctx.save(); squircle(sx, sy, sw, sh, r); ctx.clip(); ctx.globalAlpha = cardA; ctx.strokeStyle = T.cardTop; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(sx, sy + 0.5); ctx.lineTo(sx + sw, sy + 0.5); ctx.stroke(); ctx.restore(); }
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // ---------------------------------------------------------------- relationships: typed edges, rolled up to what is on screen
+  // Every relation joins two tree nodes (any depth). Each frame an endpoint "attaches" to whichever of its
+  // ancestors is drawn as a card, crossfading between levels as boxes open, so edges never pop while zooming.
+  const KINDS = {
+    http:     { name: 'HTTP',     desc: 'web client → API route',      dash: [7, 5],             w: 3 },
+    queue:    { name: 'Async',    desc: 'queues, outboxes, signals',   dash: [0.01, 5.5],        w: 3.2, flow: true },
+    webhook:  { name: 'Webhook',  desc: 'a service calls in',          dash: [1.5, 3.5, 8, 3.5], w: 3 },
+    external: { name: 'External', desc: 'calls a third-party API',     dash: [10, 4, 1.5, 4],    w: 2.6 },
+    sandbox:  { name: 'Sandbox',  desc: 'runs code in a sandbox',             dash: [2.5, 3.5],         w: 2.6 },
+    db:       { name: 'Data',     desc: 'reads and writes tables',     dash: [14, 3.5],          w: 2 },
+    import:   { name: 'Code',     desc: 'imports and direct calls',    dash: [],                 w: 1 },
+  };
+  const KIND_ORDER = ['http', 'queue', 'webhook', 'external', 'sandbox', 'db', 'import'];
+  const kindOn = Object.fromEntries(KIND_ORDER.map((k) => [k, true]));
+  const ROLL = DATA.root.rollups && typeof DATA.root.rollups === 'object' ? DATA.root.rollups : {};
+  const rollup = (a, b) => { const k = a.id + '|' + b.id; return own(ROLL, k) && ROLL[k] && typeof ROLL[k] === 'object' ? ROLL[k] : null; };
+  const pathOf = (n) => { const p = []; for (let a = n; a && a.parent; a = a.parent) p.unshift(a); return p; }; // depth 1 .. n
+  const RELS = (Array.isArray(DATA.root.relations) ? DATA.root.relations : []).map((r) => {
+    if (!r || typeof r !== 'object') return null;
+    const a = byId.get(r.from), b = byId.get(r.to);
+    if (!a || !b || a === b || !own(KINDS, r.kind)) return null;
+    return { a, b, kind: r.kind, label: String(r.label ?? ''), count: Math.max(1, +r.count || 1), details: Array.isArray(r.details) ? r.details.map(String) : [],
+      status: statusOf(r), confidence: r.confidence === 'low' ? 'low' : '',
+      evidence: Array.isArray(r.evidence) ? r.evidence.filter(Array.isArray).map((e) => [String(e[0] ?? ''), +e[1] || 0, String(e[2] ?? '')]) : [],
+      pa: pathOf(a), pb: pathOf(b) };
+  }).filter(Boolean);
+  const isAnc = (a, b) => { for (let p = b.parent; p; p = p.parent) if (p === a) return true; return false; };
+  const within = (s, n) => n === s || isAnc(s, n);
+
+  // per-frame openness of any node (not culled, so off-screen endpoints still resolve)
+  let nsCache = new Map();
+  function nstate(n) {
+    let s = nsCache.get(n);
+    if (s) return s;
+    const t = openness(n, srect(n));
+    const alpha = n.parent ? nstate(n.parent).alpha * childFade(nstate(n.parent).t) : 1;
+    s = { t, alpha };
+    nsCache.set(n, s);
+    return s;
+  }
+  // distribution of a leaf over its drawn ancestors: [[node, weight]...]
+  function attach(path) {
+    const out = [];
+    for (const x of path) {
+      const s = nstate(x);
+      const w = s.alpha * (1 - childFade(s.t));
+      if (w > 0.02) out.push([x, w]);
+      if (s.alpha * childFade(s.t) < 0.02) break;
+    }
+    return out;
+  }
+  const primaryRep = (n) => { let best = null, bw = 0; for (const [x, w] of attach(pathOf(n))) if (w >= bw) { best = x; bw = w; } return best; };
+
+  let groups = new Map();
+  function buildGroups() {
+    nsCache = new Map();
+    groups = new Map();
+    for (const r of RELS) {
+      if (!kindOn[r.kind]) continue;
+      const da = attach(r.pa), db = attach(r.pb);
+      for (const [A, wa] of da) for (const [B, wb] of db) {
+        if (A === B || isAnc(A, B) || isAnc(B, A)) continue;
+        const key = A.id + '\u0000' + B.id;
+        let g = groups.get(key);
+        if (!g) { g = { key, A, B, w: 0, count: 0, kinds: {}, rels: [], score: 0 }; groups.set(key, g); }
+        g.w = Math.max(g.w, wa * wb);
+        if (!g.rels.includes(r)) { g.rels.push(r); g.count += r.count; g.kinds[r.kind] = (g.kinds[r.kind] || 0) + r.count; }
+      }
+    }
+    for (const g of groups.values()) {
+      let best = 'import', bs = -1;
+      for (const k in g.kinds) { const s = KINDS[k].w * Math.log2(1 + g.kinds[k]); g.score += s; if (s > bs) { bs = s; best = k; } }
+      g.primary = best;
+      g.tentative = tentativeOf(g.rels);
+    }
+  }
+  // "inferred" / "planned" when every relation behind an edge is unconfirmed or not built yet
+  function tentativeOf(rels) {
+    if (!rels.length) return '';
+    if (rels.every((r) => r.confidence === 'low')) return 'inferred';
+    if (rels.every((r) => r.status === 'proposed' || r.status === 'planned' || r.confidence === 'low')) return rels.some((r) => r.status === 'planned') ? 'planned' : 'proposed';
+    return '';
+  }
+  function groupLabel(g) {
+    const ru = rollup(g.A, g.B);
+    if (ru && ru.label) return String(ru.label);
+    const rs = g.rels.filter((r) => r.kind === g.primary).sort((p, q) => q.count - p.count);
+    if (!rs.length) return KINDS[g.primary].name;
+    if (g.primary === 'http') { const n = new Set(rs.flatMap((r) => r.details)).size; return n > 1 ? `${n} API routes` : (rs[0].details[0] || rs[0].label); }
+    return rs[0].label + (rs.length > 1 ? ` +${rs.length - 1}` : '');
+  }
+  function kindsSummary(kinds) {
+    return KIND_ORDER.filter((k) => kinds[k]).map((k) => `${KINDS[k].name} ×${kinds[k]}`).join(' · ');
+  }
+
+  // ---------------------------------------------------------------- gutter routing
+  // Routes run along the gutters between sibling cards. In a group's normalized content frame the gutter
+  // centrelines are exactly the treemap tile boundaries, so a graph of tile sides is a graph of gutters.
+  const gutterGraphs = new Map();
+  const pkey = (u, v) => Math.round(u * 1e5) + ',' + Math.round(v * 1e5);
+  const tileOf = (c) => { const p = c.parent; return [(c.x - p.x) / p.w, (c.y - p.y) / p.h, (c.x + c.w - p.x) / p.w, (c.y + c.h - p.y) / p.h]; };
+  const sideMid = (t, s) => (s === 0 ? [t[0], (t[1] + t[3]) / 2] : s === 1 ? [(t[0] + t[2]) / 2, t[1]] : s === 2 ? [t[2], (t[1] + t[3]) / 2] : [(t[0] + t[2]) / 2, t[3]]);
+  const BORDER = [[0, 0.5], [0.5, 0], [1, 0.5], [0.5, 1]];
+  function gutterGraph(G) {
+    let gg = gutterGraphs.get(G);
+    if (gg) return gg;
+    const pts = [], idx = new Map();
+    const add = (u, v) => { const k = pkey(u, v); let i = idx.get(k); if (i === undefined) { i = pts.length; pts.push([u, v]); idx.set(k, i); } return i; };
+    const tiles = G.children.map(tileOf);
+    for (const t of tiles) { add(t[0], t[1]); add(t[2], t[1]); add(t[0], t[3]); add(t[2], t[3]); for (let s = 0; s < 4; s++) add(...sideMid(t, s)); }
+    for (const b of BORDER) add(b[0], b[1]);
+    const adj = pts.map(() => []), seen = new Set();
+    const eps = 1e-6;
+    const link = (i, j) => {
+      const k = i < j ? i + ':' + j : j + ':' + i;
+      if (seen.has(k)) return; seen.add(k);
+      const [u0, v0] = pts[i], [u1, v1] = pts[j];
+      const horiz = Math.abs(v0 - v1) < eps;
+      const onBorder = horiz ? (v0 < eps || v0 > 1 - eps) : (u0 < eps || u0 > 1 - eps);
+      const len = horiz ? Math.abs(u1 - u0) * G.w : Math.abs(v1 - v0) * G.h;
+      const c = len * (onBorder ? 1.25 : 1);
+      adj[i].push([j, c, horiz ? 0 : 1]); adj[j].push([i, c, horiz ? 0 : 1]);
+    };
+    const segs = [];
+    for (const t of tiles) segs.push([t[0], t[1], t[2], t[1]], [t[0], t[3], t[2], t[3]], [t[0], t[1], t[0], t[3]], [t[2], t[1], t[2], t[3]]);
+    for (const [u0, v0, u1, v1] of segs) {
+      const horiz = Math.abs(v0 - v1) < eps;
+      const on = [];
+      pts.forEach((p, i) => {
+        if (horiz ? Math.abs(p[1] - v0) < eps && p[0] >= u0 - eps && p[0] <= u1 + eps : Math.abs(p[0] - u0) < eps && p[1] >= v0 - eps && p[1] <= v1 + eps) on.push(i);
+      });
+      on.sort((i, j) => (horiz ? pts[i][0] - pts[j][0] : pts[i][1] - pts[j][1]));
+      for (let k = 1; k < on.length; k++) link(on[k - 1], on[k]);
+    }
+    gg = { pts, idx, adj, tiles: new Map(G.children.map((c, i) => [c, tiles[i]])), turn: 0.06 * (G.w + G.h) };
+    gutterGraphs.set(G, gg);
+    return gg;
+  }
+  // multi-source Dijkstra with a turn penalty; sources/targets: [[pointIndex, extraCost, tag]]
+  function dijkstra(gg, sources, targets) {
+    const N = gg.pts.length, dist = new Float64Array(N * 3).fill(Infinity), prev = new Int32Array(N * 3).fill(-1);
+    const heap = [];
+    const push = (d, s) => { heap.push([d, s]); let i = heap.length - 1; while (i > 0) { const p = (i - 1) >> 1; if (heap[p][0] <= heap[i][0]) break; [heap[p], heap[i]] = [heap[i], heap[p]]; i = p; } };
+    const pop = () => { const top = heap[0], last = heap.pop(); if (heap.length) { heap[0] = last; let i = 0; for (;;) { const l = 2 * i + 1, r = l + 1; let m = i; if (l < heap.length && heap[l][0] < heap[m][0]) m = l; if (r < heap.length && heap[r][0] < heap[m][0]) m = r; if (m === i) break; [heap[m], heap[i]] = [heap[i], heap[m]]; i = m; } } return top; };
+    for (const [p, c] of sources) { const s = p * 3 + 2; if (c < dist[s]) { dist[s] = c; push(c, s); } }
+    const tgt = new Map(targets.map(([p, c, tag]) => [p, [c, tag]]));
+    let best = null;
+    while (heap.length) {
+      const [d, s] = pop();
+      if (d > dist[s]) continue;
+      if (best && d >= best.d) break;
+      const p = (s / 3) | 0, axis = s % 3;
+      if (tgt.has(p)) { const [c, tag] = tgt.get(p); if (!best || d + c < best.d) best = { d: d + c, s, tag }; }
+      for (const [q, c, ax] of gg.adj[p]) {
+        const nd = d + c + (axis !== 2 && axis !== ax ? gg.turn : 0), ns = q * 3 + ax;
+        if (nd < dist[ns]) { dist[ns] = nd; prev[ns] = s; push(nd, ns); }
+      }
+    }
+    if (!best) return null;
+    const out = [];
+    for (let s = best.s; s >= 0; s = prev[s]) out.unshift((s / 3) | 0);
+    return { pts: out.filter((p, i) => i === 0 || p !== out[i - 1]), tag: best.tag, d: best.d };
+  }
+  const wc = (n) => [n.x + n.w / 2, n.y + n.h / 2];
+  // climb from node X up to (not including) level L: returns generic points (inner to outer) and the side X's chain exits L's child by
+  function climb(X, L, toward) {
+    const pts = [{ face: X }]; // first point: face of X (side resolved later)
+    let cur = X, sides = [0, 1, 2, 3];
+    const chain = [];
+    while (cur.parent !== L) {
+      const G = cur.parent, gg = gutterGraph(G), t = gg.tiles.get(cur);
+      const srcs = sides.map((s) => [gg.idx.get(pkey(...sideMid(t, s))), 0, s]);
+      const tg = BORDER.map((b, s) => [gg.idx.get(pkey(b[0], b[1])), Math.hypot(G.x + b[0] * G.w - toward[0], G.y + b[1] * G.h - toward[1]) + (s === 1 ? 0.15 * G.h : 0), s]);
+      // which source side was used is implied by the first point; keep the path and the exit side
+      const r = dijkstra(gg, srcs, tg);
+      if (!r) return null;
+      chain.push({ G, path: r.pts });
+      sides = [r.tag];
+      cur = G;
+    }
+    return { chain, top: cur, sides, pts };
+  }
+  const routeCache = new Map();
+  function route(A, B) {
+    const key = A.id + '\u0000' + B.id;
+    if (routeCache.has(key)) return routeCache.get(key);
+    let L = A.parent; while (L && !isAnc(L, B)) L = L.parent;
+    let res = null;
+    if (L) {
+      const ca = climb(A, L, wc(B)), cb = climb(B, L, wc(A));
+      if (ca && cb) {
+        const gg = gutterGraph(L), ta = gg.tiles.get(ca.top), tb = gg.tiles.get(cb.top);
+        const r = dijkstra(gg, ca.sides.map((s) => [gg.idx.get(pkey(...sideMid(ta, s))), 0, s]), cb.sides.map((s) => [gg.idx.get(pkey(...sideMid(tb, s))), 0, s]));
+        if (r) {
+          // generic points: {G, i} (point i of G's gutter graph)
+          const seq = [];
+          for (const c of ca.chain) for (const i of c.path) seq.push({ G: c.G, i });
+          for (const i of r.pts) seq.push({ G: L, i });
+          for (let k = cb.chain.length - 1; k >= 0; k--) { const c = cb.chain[k]; for (let j = c.path.length - 1; j >= 0; j--) seq.push({ G: c.G, i: c.path[j] }); }
+          res = { seq, A, B };
+        }
+      }
+    }
+    if (routeCache.size > 4000) routeCache.clear();
+    routeCache.set(key, res);
+    return res;
+  }
+  function gpoint(p) {
+    const r = srect(p.G), [u, v] = gutterGraph(p.G).pts[p.i];
+    return [r.sx + PAD + u * Math.max(0, r.sw - 2 * PAD), r.sy + HEADER + v * Math.max(0, r.sh - HEADER - PAD)];
+  }
+  // face point of a card nearest to the first gutter point (it sits GAP/2 outside the card on one side)
+  function facePoint(n, q) {
+    const r = srect(n), cx = r.sx + r.sw / 2, cy = r.sy + r.sh / 2;
+    const dl = Math.abs(q[0] - r.sx), dr = Math.abs(q[0] - (r.sx + r.sw)), dt = Math.abs(q[1] - r.sy), db = Math.abs(q[1] - (r.sy + r.sh));
+    const m = Math.min(dl, dr, dt, db);
+    if (m === dl) return [r.sx, clamp(q[1], r.sy + 6, r.sy + r.sh - 6)];
+    if (m === dr) return [r.sx + r.sw, clamp(q[1], r.sy + 6, r.sy + r.sh - 6)];
+    if (m === dt) return [clamp(q[0], r.sx + 6, r.sx + r.sw - 6), r.sy];
+    return [clamp(q[0], r.sx + 6, r.sx + r.sw - 6), r.sy + r.sh];
+  }
+  // screen polyline: orthogonal, simplified, offset into a lane
+  function screenPath(g, lane) {
+    const rt = route(g.A, g.B);
+    if (!rt) return null;
+    let pts = rt.seq.map(gpoint);
+    if (!pts.length) return null;
+    pts.unshift(facePoint(g.A, pts[0])); pts.push(facePoint(g.B, pts[pts.length - 1]));
+    // orthogonalize slanted hops (level changes): first leg perpendicular to the previous segment
+    const o = [pts[0]];
+    for (let i = 1; i < pts.length; i++) {
+      const p = o[o.length - 1], q = pts[i];
+      if (Math.abs(p[0] - q[0]) > 0.5 && Math.abs(p[1] - q[1]) > 0.5) {
+        const pp = o.length > 1 ? o[o.length - 2] : null;
+        const prevVert = pp ? Math.abs(pp[0] - p[0]) < 0.5 : Math.abs(q[0] - p[0]) < Math.abs(q[1] - p[1]);
+        o.push(prevVert ? [q[0], p[1]] : [p[0], q[1]]);
+      }
+      o.push(q);
+    }
+    // drop duplicates and collinear points
+    const s = [];
+    for (const p of o) {
+      const l = s[s.length - 1];
+      if (l && Math.abs(l[0] - p[0]) < 0.5 && Math.abs(l[1] - p[1]) < 0.5) continue;
+      if (s.length >= 2) { const a = s[s.length - 2]; if ((Math.abs(a[0] - l[0]) < 0.5 && Math.abs(l[0] - p[0]) < 0.5) || (Math.abs(a[1] - l[1]) < 0.5 && Math.abs(l[1] - p[1]) < 0.5)) s.pop(); }
+      s.push(p);
+    }
+    if (s.length < 2) return null;
+    if (lane) { // shift every segment sideways; corners take x from vertical and y from horizontal neighbours
+      const segOff = [];
+      for (let i = 1; i < s.length; i++) segOff.push(Math.abs(s[i][1] - s[i - 1][1]) < 0.5 ? [0, lane] : [lane, 0]);
+      const out = s.map((p, i) => {
+        const a = segOff[Math.max(0, i - 1)], b = segOff[Math.min(segOff.length - 1, i)];
+        if (i === 0) return [p[0] + b[0], p[1] + b[1]];
+        if (i === s.length - 1) return [p[0] + a[0], p[1] + a[1]];
+        return [p[0] + a[0] + b[0], p[1] + a[1] + b[1]];
+      });
+      return out;
+    }
+    return s;
+  }
+  function longestSeg(pts) { let m = 0; for (let i = 1; i < pts.length; i++) m = Math.max(m, Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1])); return m; }
+  function midLongest(pts) { let m = -1, k = 1; for (let i = 1; i < pts.length; i++) { const l = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); if (l > m) { m = l; k = i; } } return [(pts[k][0] + pts[k - 1][0]) / 2, (pts[k][1] + pts[k - 1][1]) / 2]; }
+  function pathLen(pts) { let L = 0; for (let i = 1; i < pts.length; i++) L += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); return L; }
+  function pointAt(pts, f) { // point + direction at fraction f of the length
+    let target = pathLen(pts) * clamp(f, 0, 1);
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1], b = pts[i], l = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      if (target <= l || i === pts.length - 1) { const u = l ? clamp(target / l, 0, 1) : 0; return [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, Math.atan2(b[1] - a[1], b[0] - a[0])]; }
+      target -= l;
+    }
+    return [pts[0][0], pts[0][1], 0];
+  }
+  function tracePath(pts, upto = 1) { // rounded-corner orthogonal path, optionally only the first `upto` fraction
+    let L = upto < 1 ? pathLen(pts) * upto : Infinity;
+    ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1], b = pts[i], c = pts[i + 1], l = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      if (L <= l) { const u = l ? L / l : 0; ctx.lineTo(a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u); return; }
+      L -= l;
+      if (c && upto >= 1) { const r = Math.min(12, l / 2, Math.hypot(c[0] - b[0], c[1] - b[1]) / 2); ctx.arcTo(b[0], b[1], c[0], c[1], r); }
+      else ctx.lineTo(b[0], b[1]);
+    }
+  }
+
+  // ---------------------------------------------------------------- kind glyphs (tiny SF-Symbols-like marks)
+  function kindGlyph(g, kind, x, y, s, color) {
+    g.save(); g.strokeStyle = color; g.fillStyle = color; g.setLineDash([]);
+    g.lineWidth = Math.max(1.1, s * 0.12); g.lineCap = 'round'; g.lineJoin = 'round';
+    const u = s / 12, X = (v) => x + v * u, Y = (v) => y + v * u;
+    g.beginPath();
+    if (kind === 'http') { g.arc(x, y, 4.8 * u, 0, Math.PI * 2); g.moveTo(X(-4.8), y); g.lineTo(X(4.8), y); g.moveTo(x + 2.1 * u, y); g.ellipse(x, y, 2.1 * u, 4.8 * u, 0, 0, Math.PI * 2); }
+    else if (kind === 'queue') { for (const d of [-3.4, 0, 3.4]) { g.moveTo(X(-4.4), Y(d)); g.lineTo(X(4.4), Y(d)); } }
+    else if (kind === 'db') { g.ellipse(x, Y(-3.4), 4.4 * u, 1.6 * u, 0, 0, Math.PI * 2); g.moveTo(X(-4.4), Y(-3.4)); g.lineTo(X(-4.4), Y(3.4)); g.ellipse(x, Y(3.4), 4.4 * u, 1.6 * u, 0, Math.PI, 0, true); g.lineTo(X(4.4), Y(-3.4)); }
+    else if (kind === 'external') { g.moveTo(X(-3.6), Y(3.6)); g.lineTo(X(3.6), Y(-3.6)); g.moveTo(X(-1), Y(-3.6)); g.lineTo(X(3.6), Y(-3.6)); g.lineTo(X(3.6), Y(1)); }
+    else if (kind === 'webhook') { g.moveTo(X(3.6), Y(-3.6)); g.lineTo(X(-3.6), Y(3.6)); g.moveTo(X(-3.6), Y(-1)); g.lineTo(X(-3.6), Y(3.6)); g.lineTo(X(1), Y(3.6)); }
+    else if (kind === 'sandbox') { g.moveTo(x, Y(-4.6)); g.lineTo(X(4.2), Y(-2.3)); g.lineTo(X(4.2), Y(2.3)); g.lineTo(x, Y(4.6)); g.lineTo(X(-4.2), Y(2.3)); g.lineTo(X(-4.2), Y(-2.3)); g.closePath(); g.moveTo(X(-4.2), Y(-2.3)); g.lineTo(x, y); g.lineTo(X(4.2), Y(-2.3)); g.moveTo(x, y); g.lineTo(x, Y(4.6)); }
+    else { g.moveTo(X(-1.4), Y(-3.8)); g.lineTo(X(-4.8), y); g.lineTo(X(-1.4), Y(3.8)); g.moveTo(X(1.4), Y(-3.8)); g.lineTo(X(4.8), y); g.lineTo(X(1.4), Y(3.8)); }
+    g.stroke(); g.restore();
+  }
+  function strokeKind(kind, color, lw, a, animate, now) {
+    const k = KINDS[kind];
+    ctx.setLineDash(k.dash.map((d) => d * (lw / 1.5) ** 0.5));
+    ctx.lineDashOffset = k.flow && animate ? -((now / 40) % 1000) : 0;
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.globalAlpha = a; ctx.strokeStyle = color; ctx.lineWidth = kind === 'queue' ? lw + 0.6 : lw;
+    ctx.stroke();
+    ctx.setLineDash([]); ctx.lineDashOffset = 0;
+  }
+  function arrowHead(pts, color, a, size = 7) {
+    const n = pts.length, [x1, y1] = pts[n - 1], [x0, y0] = pts[n - 2];
+    const ang = Math.atan2(y1 - y0, x1 - x0), sp = 0.5;
+    ctx.globalAlpha = a; ctx.fillStyle = color; ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x1 - size * Math.cos(ang - sp), y1 - size * Math.sin(ang - sp));
+    ctx.quadraticCurveTo(x1 - size * 0.62 * Math.cos(ang), y1 - size * 0.62 * Math.sin(ang), x1 - size * Math.cos(ang + sp), y1 - size * Math.sin(ang + sp));
+    ctx.closePath(); ctx.fill();
+  }
+  function trimEnd(pts, d) { // stop the line inside the arrowhead
+    const out = pts.map((p) => p.slice());
+    const n = out.length, a = out[n - 2], b = out[n - 1], l = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (l > d) { b[0] -= ((b[0] - a[0]) / l) * d; b[1] -= ((b[1] - a[1]) / l) * d; }
+    return out;
+  }
+  function badge(x, y, kind, color, a, r = 8.5) {
+    ctx.globalAlpha = a; ctx.fillStyle = T.pill; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    ctx.lineWidth = 1; ctx.strokeStyle = T.pillHair; ctx.stroke();
+    ctx.globalAlpha = a; kindGlyph(ctx, kind, x, y, r * 1.15, color);
+  }
+  // neighbours share only a gap: a connector token bridges it (glyph + a tip pointing the way)
+  const SHORT_PATH = 46;
+  function bridge(pts, kind, color, a, ring) {
+    const [x0, y0] = pts[0], [x1, y1] = pts[pts.length - 1], mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
+    const ang = Math.atan2(y1 - y0, x1 - x0), r = 12, c = Math.cos(ang), sn = Math.sin(ang);
+    drawShadow(mx - r, my - r, 2 * r, 2 * r, r, a * 0.7);
+    ctx.globalAlpha = a; ctx.fillStyle = T.pill; ctx.beginPath(); ctx.arc(mx, my, r, 0, Math.PI * 2); ctx.fill();
+    ctx.lineWidth = ring ? 1.5 : 1; ctx.strokeStyle = ring ? color : T.pillHair; ctx.stroke();
+    kindGlyph(ctx, kind, mx, my, 12.5, color);
+    const tx = mx + c * (r + 3.2), ty = my + sn * (r + 3.2), P = (u, w) => [tx + u * c - w * sn, ty + u * sn + w * c];
+    ctx.globalAlpha = a; ctx.fillStyle = color; ctx.beginPath(); ctx.moveTo(...P(2.6, 0)); ctx.lineTo(...P(-2, -3.4)); ctx.lineTo(...P(-2, 3.4)); ctx.closePath(); ctx.fill();
+    return [mx, my];
+  }
+  // label pill: glyph + text, placed where it does not collide with earlier pills
+  const PILL_H = 22;
+  function pillBox(text) { setFont(500, 11.5); return Math.min(260, ctx.measureText(text).width) + 34; }
+  function drawPill(x, y, w, text, kind, color, a) {
+    const h = PILL_H;
+    drawShadow(x - w / 2, y - h / 2, w, h, 11, a * 0.6);
+    ctx.globalAlpha = a; ctx.fillStyle = T.pill; ctx.beginPath(); ctx.roundRect(x - w / 2, y - h / 2, w, h, 11); ctx.fill();
+    ctx.lineWidth = 1; ctx.strokeStyle = T.pillHair; ctx.stroke();
+    kindGlyph(ctx, kind, x - w / 2 + 14, y, 10, color);
+    ctx.globalAlpha = a; ctx.fillStyle = T.label; setFont(500, 11.5); ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+    ctx.fillText(ellipsize(text, w - 34), x - w / 2 + 25, y + 0.5);
+    ctx.textBaseline = 'top';
+  }
+
+  // ---------------------------------------------------------------- what to draw this frame
+  const REST_MAX = 7, FOCUS_MAX = 9, EDGE_FADE_MS = 260;
+  const edgeFades = new Map();
+  let relAnimating = false;
+  function edgeFade(key, target, now) {
+    let e = edgeFades.get(key);
+    if (!e) { if (target <= 0) return 0; e = { v: 0, t: now }; edgeFades.set(key, e); }
+    const step = Math.min(1, (now - e.t) / EDGE_FADE_MS); e.t = now;
+    e.v = target > e.v ? Math.min(target, e.v + step) : Math.max(target, e.v - step);
+    if (e.v !== target) relAnimating = true;
+    if (e.v <= 0 && target <= 0) edgeFades.delete(key);
+    return e.v * e.v * (3 - 2 * e.v);
+  }
+  const onScreen = (n) => { const r = srect(n); return r.sw >= 28 && r.sh >= 22 && r.sx < W && r.sy < H && r.sx + r.sw > 0 && r.sy + r.sh > 0; };
+  function pickRest() {
+    const cands = [...groups.values()].filter((g) => g.w > 0.35 && onScreen(g.A) && onScreen(g.B) && !g.A.quiet && !g.B.quiet).sort((p, q) => q.score - p.score);
+    const per = new Map(), perKind = new Map(), pairs = new Set(), out = new Set();
+    for (const g of [...cands.filter((g, i) => cands.findIndex((h) => h.primary === g.primary) === i), ...cands]) {
+      if (out.size >= REST_MAX) break;
+      const pk = g.A.id < g.B.id ? g.A.id + '|' + g.B.id : g.B.id + '|' + g.A.id;
+      if (pairs.has(pk) || (per.get(g.A) || 0) >= 2 || (per.get(g.B) || 0) >= 2 || (perKind.get(g.primary) || 0) >= 3) continue;
+      pairs.add(pk); out.add(g.key);
+      per.set(g.A, (per.get(g.A) || 0) + 1); per.set(g.B, (per.get(g.B) || 0) + 1); perKind.set(g.primary, (perKind.get(g.primary) || 0) + 1);
+    }
+    return out;
+  }
+  let drawnEdges = [], relatedNodes = new Map(), dimK = 0, hoverEdge = null, inspHover = null;
+  let edgesOn = true;
+  // ---------------------------------------------------------------- flows
+  const FLOWS = (Array.isArray(DATA.root.flows) ? DATA.root.flows : []).filter((f) => f && typeof f === 'object' && Array.isArray(f.steps)).map((f, i) => ({
+    id: String(f.id ?? 'flow' + i), title: String(f.title ?? 'Flow'), summary: String(f.summary ?? ''),
+    status: typeof f.status === 'string' ? f.status : '', footnote: typeof f.footnote === 'string' ? f.footnote : null,
+    steps: f.steps.filter((s) => s && byId.has(s.from) && byId.has(s.to)).map((s) => ({ a: byId.get(s.from), b: byId.get(s.to), kind: own(KINDS, s.kind) ? s.kind : 'import', text: String(s.text ?? ''), detected: !!s.detected,
+      tags: Array.isArray(s.tags) ? s.tags.map(String).slice(0, 3) : null })),
+  })).filter((f) => f.steps.length);
+  let STEP_MS = 2600;
+  const FLOW_REST_MS = 600;
+  let flowTour = true; // the camera follows each step until the user takes over
+  let activeFlow = null, flowT0 = 0, flowFreeze = null, flowStepShown = -1;
+  function flowClock(now) {
+    const f = activeFlow, total = f.steps.length * STEP_MS + FLOW_REST_MS;
+    if (flowFreeze) return flowFreeze;
+    const t = (now - flowT0) % total, i = Math.floor(t / STEP_MS);
+    return i >= f.steps.length ? { i: f.steps.length, u: 0 } : { i, u: (t - i * STEP_MS) / STEP_MS };
+  }
+
+  function drawRelations(now) {
+    relAnimating = false; drawnEdges = []; relatedNodes = new Map(); dimK = 0;
+    buildGroups();
+    if (activeFlow) drawFlow(now); else drawFocus(now);
+    // cards are drawn before edges, so the dim applies next frame; ask for it when it changed
+    const key = dimK.toFixed(3) + [...relatedNodes.keys()].map((n) => n.id).join(',');
+    if (key !== dimKey) { dimKey = key; dirty = true; if (!rafId) rafId = requestAnimationFrame(frame); }
+    dimState = { k: dimK, rel: relatedNodes };
+  }
+  let dimKey = '';
+  function drawFocus(now) {
+    const foci = [];
+    if (selected) foci.push([selected, 1]);
+    if (hoverNode && hoverK > 0.01 && hoverNode !== selected) foci.push([hoverNode, hoverK]);
+    const fk = foci.reduce((m, f) => Math.max(m, f[1]), 0);
+    const rest = edgesOn ? pickRest() : new Set();
+    const items = [];
+    for (const g of groups.values()) {
+      let hi = 0, F = null;
+      for (const [S, k] of foci) if ((within(S, g.A) !== within(S, g.B)) && k > hi) { hi = k; F = S; }
+      if (inspHover && within(inspHover.S, inspHover.dir > 0 ? g.A : g.B) && (inspHover.dir > 0 ? g.B : g.A) === inspHover.other) { hi = 1; F = inspHover.S; }
+      const r = edgeFade(g.key, rest.has(g.key) ? 1 : 0, now) * (1 - fk);
+      if (hi > 0.01 || r > 0.01 || g.key === hoverEdge) items.push({ g, hi, r, F });
+    }
+    // keep focus readable: the strongest few related groups only
+    const hiItems = items.filter((it) => it.hi > 0.01).sort((p, q) => q.g.score - p.g.score);
+    const keepHi = new Set(hiItems.slice(0, FOCUS_MAX));
+    const list = items.filter((it) => it.hi <= 0.01 || keepHi.has(it) || (inspHover && it.hi >= 1) || it.g.key === hoverEdge);
+    for (const [S, k] of foci) { relatedNodes.set(S, Math.max(relatedNodes.get(S) || 0, k)); }
+    for (const it of list) if (it.hi > 0.01) {
+      const other = within(it.F, it.g.A) ? it.g.B : it.g.A, self = other === it.g.A ? it.g.B : it.g.A;
+      relatedNodes.set(other, Math.max(relatedNodes.get(other) || 0, it.hi));
+      relatedNodes.set(self, Math.max(relatedNodes.get(self) || 0, it.hi));
+    }
+    dimK = foci.length && hiItems.length ? fk * T.dim : 0;
+    // lanes: edges sharing a gutter fan out a little
+    list.sort((p, q) => (p.hi - q.hi) || (p.g.score - q.g.score));
+    const LANES = [0, 3, -3, 6, -6, 9, -9];
+    const pills = [];
+    const placed = [];
+    list.forEach((it, i) => {
+      const { g } = it;
+      const lane = LANES[i % LANES.length] * (it.hi > 0.01 ? 1 : 0.8);
+      const pts = screenPath(g, lane);
+      if (!pts || pathLen(pts) < 2) return;
+      const hov = g.key === hoverEdge;
+      const color = it.hi > 0.01 || hov ? tintOf(it.F || g.A) : T.edge;
+      const a = g.w * Math.max(it.r * 0.9, it.hi, hov ? 1 : 0) * (g.tentative ? 0.62 : 1);
+      if (a < 0.02) return;
+      const lw = it.hi > 0.01 || hov ? clamp(1.3 + Math.log10(g.count) * 0.35, 1.5, 2.3) : 1.6;
+      if (pathLen(pts) < SHORT_PATH) {
+        drawnEdges.push({ key: g.key, g, pts, a });
+        if ((it.hi > 0.5 || hov) && a > 0.3) pills.push({ it, pts, color, a, hov, short: true });
+        else { const [x, y] = bridge(pts, g.primary, color === T.edge ? T.label2 : color, a, false); placed.push([x - 13, y - 13, 26, 26]); }
+        return;
+      }
+      tracePath(trimEnd(pts, 4)); strokeKind(g.primary, color, lw, a, it.hi > 0.01 || hov, now);
+      if (KINDS[g.primary].flow && (it.hi > 0.01 || hov)) relAnimating = true;
+      arrowHead(pts, color, a, it.hi > 0.01 || hov ? 8 : 7);
+      ctx.globalAlpha = a; ctx.fillStyle = color; ctx.beginPath(); ctx.arc(pts[0][0], pts[0][1], lw + 0.9, 0, Math.PI * 2); ctx.fill();
+      drawnEdges.push({ key: g.key, g, pts, a });
+      if ((it.hi > 0.5 || hov) && a > 0.3) pills.push({ it, pts, color, a, hov });
+      else if (longestSeg(pts) > 34) { const [x, y] = midLongest(pts); badge(x, y, g.primary, color === T.edge ? T.label2 : color, a); placed.push([x - 9, y - 9, 18, 18]); }
+    });
+    // labels last, strongest first, avoiding each other
+    pills.sort((p, q) => (q.hov - p.hov) || (q.it.g.score - p.it.g.score));
+    let shown = 0;
+    for (const p of pills) {
+      if (!p.hov && shown >= 6) p.skipLabel = true;
+      const text = groupLabel(p.it.g) + (p.it.g.tentative ? ` · ${p.it.g.tentative}` : ''), w = pillBox(text);
+      for (const f of p.skipLabel ? [] : [0.5, 0.36, 0.64, 0.24, 0.76]) {
+        let [x, y] = pointAt(p.pts, f);
+        x = clamp(x, w / 2 + 8, W - w / 2 - 8); y = clamp(y, PILL_H, H - PILL_H);
+        const box = [x - w / 2 - 4, y - PILL_H / 2 - 4, w + 8, PILL_H + 8];
+        if (!p.hov && placed.some((b) => b[0] < box[0] + box[2] && box[0] < b[0] + b[2] && b[1] < box[1] + box[3] && box[1] < b[1] + b[3])) continue;
+        placed.push(box); drawPill(x, y, w, text, p.it.g.primary, p.color, p.a); shown++; p.done = true;
+        break;
+      }
+      if (!p.done) { // no room for a label: a glyph chip still names the kind
+        const [x, y] = p.short ? [(p.pts[0][0] + p.pts[p.pts.length - 1][0]) / 2, (p.pts[0][1] + p.pts[p.pts.length - 1][1]) / 2] : midLongest(p.pts);
+        if (!placed.some((b) => x > b[0] - 12 && x < b[0] + b[2] + 12 && y > b[1] - 12 && y < b[1] + b[3] + 12)) {
+          if (p.short) bridge(p.pts, p.it.g.primary, p.color, p.a, true); else badge(x, y, p.it.g.primary, p.color, p.a, 9.5);
+          placed.push([x - 12, y - 12, 24, 24]);
+        }
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+  // unrelated cards fade back (drawn at lower opacity, not covered by an overlay: no extra fill per card)
+  let dimState = { k: 0, rel: new Map() };
+  function dimFactor(n) {
+    const { k, rel } = dimState;
+    if (k < 0.01 || rel.has(n)) return 1;
+    for (const [m] of rel) if (isAnc(n, m)) return 1;
+    return 1 - k;
+  }
+  function drawFlow(now) {
+    const f = activeFlow, clock = flowClock(now);
+    if (!flowFreeze) relAnimating = true;
+    const segs = f.steps.map((s, i) => {
+      const A = primaryRep(s.a), B = primaryRep(s.b);
+      if (!A || !B || A === B || isAnc(A, B) || isAnc(B, A)) return { s, i, A, B, pts: null };
+      return { s, i, A, B, pts: screenPath({ A, B }, ((i % 3) - 1) * 3) };
+    });
+    for (const sg of segs) { if (sg.A) relatedNodes.set(sg.A, 1); if (sg.B) relatedNodes.set(sg.B, 1); }
+    for (const st of f.steps) for (const n of [st.a, st.b]) for (let a = n; a && a.parent; a = a.parent) relatedNodes.set(a, relatedNodes.get(a) || 0.001);
+    dimK = T.dim;
+    const col = T.flow;
+    for (const sg of segs) {
+      if (!sg.pts) continue;
+      const past = sg.i < clock.i, cur = sg.i === clock.i;
+      const a = cur ? 1 : past ? 0.6 : 0.28;
+      if (pathLen(sg.pts) < SHORT_PATH) { sg.short = true; continue; }
+      tracePath(trimEnd(sg.pts, 4)); strokeKind(sg.s.kind, col, cur ? 2.4 : 1.8, a, cur, now);
+      arrowHead(sg.pts, col, a, 7.5);
+    }
+    // the travelling pulse on the current step
+    const cs = segs[clock.i];
+    if (cs && cs.short) { // a hop between neighbours: the token itself breathes
+      const k = 0.5 + 0.5 * Math.sin(clock.u * Math.PI * 2 * 1.5 - Math.PI / 2);
+      const [x0, y0] = cs.pts[0], [x1, y1] = cs.pts[cs.pts.length - 1];
+      ctx.globalAlpha = 0.18 * k; ctx.fillStyle = T.flow; ctx.beginPath(); ctx.arc((x0 + x1) / 2, (y0 + y1) / 2, 18 + 4 * k, 0, Math.PI * 2); ctx.fill();
+    }
+    for (const sg of segs) if (sg.short) bridge(sg.pts, sg.s.kind, T.flow, sg.i === clock.i ? 1 : sg.i < clock.i ? 0.7 : 0.4, sg.i === clock.i);
+    if (cs && cs.pts && !cs.short) {
+      const e = clamp((clock.u - 0.28) / 0.6, 0, 1), u = e < 0.5 ? 2 * e * e : 1 - (-2 * e + 2) ** 2 / 2;
+      const [x, y] = pointAt(cs.pts, u);
+      const fade = 1 - smooth(0.85, 1, clock.u);
+      ctx.globalAlpha = 0.16 * fade; ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x, y, 12, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 0.3 * fade; ctx.beginPath(); ctx.arc(x, y, 7, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = fade; ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(x, y, 1.6, 0, Math.PI * 2); ctx.fill();
+    }
+    // numbered steps (a step inside one card shows its number on that card's edge)
+    const placed = [];
+    for (const sg of segs) {
+      let x, y;
+      if (sg.pts && sg.short) { const [x0, y0] = sg.pts[0], [x1, y1] = sg.pts[sg.pts.length - 1], hz = Math.abs(x1 - x0) > Math.abs(y1 - y0); x = (x0 + x1) / 2 + (hz ? 0 : -26); y = (y0 + y1) / 2 + (hz ? -26 : 0); }
+      else if (sg.pts) [x, y] = pointAt(sg.pts, 0.5);
+      else { const n = sg.A || sg.B; if (!n) continue; const r = srect(n); x = r.sx + r.sw - 14; y = r.sy + 14; }
+      while (placed.some(([px, py]) => Math.hypot(px - x, py - y) < 25)) { if (sg.pts) x += 25; else y += 25; } // in-card steps stack down the card's edge
+      placed.push([x, y]);
+      const cur = sg.i === clock.i, done = sg.i < clock.i;
+      ctx.globalAlpha = 1; ctx.fillStyle = T.bg; ctx.beginPath(); ctx.arc(x, y, 11.5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = cur || done ? col : T.card; ctx.beginPath(); ctx.arc(x, y, 9.5, 0, Math.PI * 2); ctx.fill();
+      ctx.lineWidth = 1.5; ctx.strokeStyle = col; ctx.globalAlpha = cur || done ? 0 : 0.9; ctx.stroke();
+      ctx.globalAlpha = cur ? 1 : done ? 0.75 : 1; ctx.fillStyle = cur || done ? '#fff' : T.link;
+      setFont(600, 11); ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(String(sg.i + 1), x, y + 0.5);
+      ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+      if (cur && sg.s.text) {
+        const w = pillBox(sg.s.text);
+        if (sg.short) { const [x0, y0] = sg.pts[0], [x1, y1] = sg.pts[sg.pts.length - 1]; drawPill((x0 + x1) / 2 + 34 + w / 2, (y0 + y1) / 2, w, sg.s.text, sg.s.kind, col, 1); }
+        else drawPill(x + 14 + w / 2, y, w, sg.s.text, sg.s.kind, col, 1);
+      }
+    }
+    if (clock.i !== flowStepShown) {
+      flowStepShown = clock.i; syncFlowSteps();
+      const st = f.steps[clock.i];
+      if (flowTour) { if (st) flyToNodes([st.a, st.b], 0.62, 900); else flyToNodes(f.steps.flatMap((x) => [x.a, x.b]), 0.86, 900); }
+    }
+    ctx.globalAlpha = 1;
+  }
+  function edgeAt(x, y) {
+    let best = null, bd = 6;
+    for (const e of drawnEdges) {
+      if (e.a < 0.15) continue;
+      for (let i = 1; i < e.pts.length; i++) {
+        const [ax, ay] = e.pts[i - 1], [bx, by] = e.pts[i], dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy || 1;
+        const u = clamp(((x - ax) * dx + (y - ay) * dy) / l2, 0, 1), d = Math.hypot(ax + u * dx - x, ay + u * dy - y);
+        if (d < bd) { bd = d; best = e; }
+      }
+    }
+    return best;
+  }
+
+  // ---------------------------------------------------------------- card content
+  // Text appears only once it fits, then fades in over FADE_MS (time-based, never zoom-based), so a resting view
+  // never shows half-transparent paragraphs. Text that stops fitting disappears at once (never overflows).
+  const FADE_MS = 220, fades = new Map();
+  let fading = false;
+  function fadeIn(n, key, fits) {
+    const k = n.id + '|' + key;
+    let e = fades.get(k);
+    if (!fits) { if (e) fades.delete(k); return 0; }
+    const now = performance.now();
+    if (!e) { e = { v: 0, t: now }; fades.set(k, e); }
+    e.v = Math.min(1, e.v + (now - e.t) / FADE_MS); e.t = now;
+    if (e.v < 1) fading = true;
+    return 1 - (1 - e.v) * (1 - e.v); // ease-out
+  }
+  // Stages are additive and anchored: the title never moves between stages, the body is one block that fades as a
+  // whole, and a paragraph only appears when it fits completely (fewer words beats cramming).
+  function drawCard(v) {
+    const { n, sx, sy, sw, sh, t, alpha } = v;
+    const cardA = alpha * cardFade(t) * dimFactor(n);
+    const openA = alpha * smooth(0.15, 0.6, t);
+    v.showsDesc = false;
+    if (sw < 32 || sh < 22) return;
+    ctx.save();
+    squircle(sx, sy, sw, sh, radiusFor(v)); ctx.clip();
+    if (hasLetterSpacing) ctx.letterSpacing = '0px';
+
+    // open group title (semibold, small, secondary) with a tint glyph — sits in the group's title band
+    if (openA > 0.01 && !n.quiet) {
+      frameT = { ox: 0, oy: 0, s: 1, box: v };
+      const gs = 18, gx = sx + PAD, gy = sy + (HEADER - gs) / 2 + 2;
+      if (sw > 3 * PAD + gs) {
+        glyph(n, gx, gy, gs, openA);
+        ctx.globalAlpha = openA; ctx.fillStyle = T.label; setFont(600, 13); ctx.textBaseline = 'middle';
+        const tx = gx + gs + 8;
+        const w = put(String(n.label ?? n.id), tx, gy + gs / 2, sx + sw - PAD - tx, 13);
+        const gt = statusTags(n), gtw = gt.length ? chipsWidth(gt, 10.5) : 0;
+        if (n.meta && w) { ctx.fillStyle = T.label3; setFont(400, 13); put(n.meta, tx + w + 8, gy + gs / 2, sx + sw - PAD - (tx + w + 8) - gtw, 13); }
+        if (gtw && w && sw > gtw + w + 120) drawChips(gt, sx + sw - PAD, gy + gs / 2, 10.5, openA);
+        ctx.textBaseline = 'top';
+      }
+    }
+
+    ctx.textBaseline = 'top'; ctx.textAlign = 'left';
+    if (cardA > 0.01) {
+      // content frame: big cards scale the whole block (no reflow), capped so text never gets comically large
+      const s = n.children.length ? 1 : clamp(Math.min(sw / 560, sh / 380), 1, 1.75);
+      const pad = Math.min(sw, sh) < 120 ? 12 : Math.min(sw, sh) < 260 ? 16 : 24;
+      const lw = (sw - 2 * pad) / s, lh = (sh - 2 * pad) / s; // local content box
+      const cw = Math.min(lw, MAX_TEXT_W);
+      const isRoot = !n.parent;
+      // title: continuous size, capped per level
+      const titleMax = isRoot ? 44 : n.depth === 1 ? 28 : n.depth === 2 ? 22 : 19;
+      const quiet = n.quiet;
+      let tfs = quiet ? clamp(Math.min(lw, lh * 1.8) * 0.07, 12, 15) : clamp(Math.min(lw * 0.075, lh * 0.2), 12, titleMax);
+      if (tfs * 1.2 > lh) tfs = lh / 1.2;
+      if (tfs * s < MIN_TEXT_PX) { ctx.restore(); return; }
+      const gsz = quiet ? 0 : Math.round(tfs * 1.15);
+      const showGlyph = !quiet && lw > gsz + 60 && tfs >= 13;
+      const titleH = Math.max(tfs * 1.2, showGlyph ? gsz : 0);
+
+      // body block pieces (local px)
+      const bfs = isRoot ? 17 : n.depth === 1 ? 15 : 13, blh = Math.round(bfs * 1.42);
+      const shortF = `400 ${bfs}px ${FONT}`;
+      const shortL = quiet || !n.shortDescription ? [] : wrapNoOrphan(n.shortDescription, shortF, cw);
+      const longL = quiet || isRoot || !n.longDescription ? [] : wrapNoOrphan(n.longDescription, `400 13px ${FONT}`, cw);
+      const fns = Array.isArray(n.functions) && !quiet ? n.functions.slice(0, 6).map(String) : [];
+      const metaLine = quiet ? '' : [n.meta, n.path].filter(Boolean).join('  ·  ');
+      const quietList = quiet && n.longDescription ? wrap(n.longDescription, `400 12px ${MONO}`, cw) : [];
+
+      let room = lh - titleH;
+      const shortH = shortL.length ? 8 + shortL.length * blh : 0;
+      const fit1 = !!shortL.length && shortL.length <= 4 && cw >= 110 && room - shortH >= 4;
+      const a1 = fadeIn(n, 's', fit1);
+      room -= shortH;
+      const longH = longL.length ? 16 + longL.length * 19 : 0;
+      const metaH = metaLine ? 28 : 0; // reserved for the pinned footer
+      const fit2 = fit1 && !!longL.length && longL.length <= 9 && cw >= 260 && room - longH - metaH >= 32;
+      const a2 = fadeIn(n, 'l', fit2);
+      const roomAfterShort = room;
+      if (fit2) room -= longH;
+      room -= metaH;
+      const chipsH = fns.length ? 16 + 24 : 0;
+      const fit3 = fit2 && !!fns.length && cw >= 260 && room - chipsH >= 24;
+      const a3 = fadeIn(n, 'c', fit3);
+      if (fit3) room -= chipsH;
+      const qa = fadeIn(n, 'q', !!quietList.length && quietList.length <= 6 && lh - titleH - 8 - quietList.length * 18 >= 12);
+      // a closed group previews what is inside it (biggest first), so roomy cards are never just empty
+      const kids = !quiet && fit1 && n.children.length && cw >= 200 ? (n.kidsByWeight ??= [...n.children].sort((a, b) => (a.quiet - b.quiet) || (b.weight || 0) - (a.weight || 0))) : [];
+      const KROW = 24, kcols = cw >= 440 ? 2 : 1;
+      const krows = kids.length ? Math.min(Math.ceil(kids.length / kcols), Math.floor((room - 20) / KROW)) : 0;
+      const fitK = kids.length > 0 && krows >= Math.min(2, Math.ceil(kids.length / kcols));
+      const ak = fadeIn(n, 'k' + krows, fitK);
+
+      // vertical placement: top-aligned, easing to centered when a leaf card has lots of spare room
+      const blockH = titleH + (fit1 ? shortH : 0) + (fit2 ? longH : 0) + (fit3 ? chipsH : 0);
+      const spare = lh - blockH;
+      const center = 0; // top-aligned, footer pinned: reads as a document, never a floating block
+      const ox = sx + pad + (lw > cw ? ((lw - cw) / 2) * s * center : 0);
+      const oy = sy + pad + Math.max(0, spare / 2) * s * center;
+      if (isRoot) { drawHero(v, cardA, pad); ctx.setTransform(DPR, 0, 0, DPR, 0, 0); ctx.restore(); return; }
+      ctx.setTransform(DPR * s, 0, 0, DPR * s, DPR * ox, DPR * oy);
+      frameT = { ox, oy, s, box: v };
+
+      // title row (fixed; never moves between stages)
+      let x = 0;
+      if (showGlyph) { glyph(n, 0, (titleH - gsz) / 2, gsz, cardA); x = gsz + Math.round(tfs * 0.5); }
+      const tags = quiet ? [] : statusTags(n), cfs = clamp(tfs * 0.52, 10.5, 12);
+      const tagW = tags.length && cw - x > 150 ? chipsWidth(tags, cfs) + 8 : 0;
+      ctx.globalAlpha = cardA; ctx.fillStyle = quiet ? T.label2 : T.label; setFont(quiet ? 500 : 600, tfs);
+      ctx.textBaseline = 'middle';
+      put(String(n.label ?? n.id), x, titleH / 2, cw - x - tagW, tfs);
+      if (tagW) drawChips(tags, cw, titleH / 2, cfs, cardA);
+      ctx.textBaseline = 'top';
+      let y = titleH;
+      if (a1 > 0.01) {
+        y += 8; ctx.globalAlpha = cardA * a1; ctx.fillStyle = T.label2; setFont(400, bfs);
+        for (const l of shortL) { put(l, 0, y + (blh - bfs) / 2, cw, bfs); y += blh; }
+        v.showsDesc = a1 > 0.5;
+      }
+      if (a2 > 0.01) {
+        y += 16; ctx.globalAlpha = cardA * a2; ctx.fillStyle = T.label2; setFont(400, 13);
+        for (const l of longL) { put(l, 0, y + 3, cw, 13); y += 19; }
+      }
+      // footer: meta line pinned to the bottom, so roomy cards feel anchored rather than empty
+      const am = fadeIn(n, 'm', !!metaLine && cw >= 120 && roomAfterShort - (fit2 ? longH : 0) >= 44);
+      if (am > 0.01) {
+        ctx.globalAlpha = cardA * am; ctx.fillStyle = T.label3;
+        const fy = (sy + sh - pad - oy) / s - 14;
+        setFont(500, 12); const w1 = n.meta ? put(n.path ? n.meta + '  ·' : n.meta, 0, fy, cw, 12) : 0;
+        if (n.path && (!n.meta || w1)) { setFont(400, 11.5, MONO); const x2 = n.meta ? w1 + 8 : 0; put(n.path, x2, fy + 0.5, cw - x2, 11.5); }
+      }
+      if (a3 > 0.01) {
+        y += 16; ctx.globalAlpha = cardA * a3; setFont(400, 11.5, MONO);
+        let cx = 0;
+        for (const f of fns) {
+          const label = f.length > 34 ? f.slice(0, 33) + '…' : f;
+          const w = ctx.measureText(label).width + 16;
+          if (cx + w > cw) break;
+          ctx.fillStyle = T.chip; ctx.beginPath(); ctx.roundRect(cx, y, w, 24, 12); ctx.fill();
+          ctx.fillStyle = T.label2; put(label, cx + 8, y + 6, w - 16, 11.5);
+          cx += w + 8;
+        }
+      }
+      if (ak > 0.01) {
+        y += 20; ctx.globalAlpha = cardA * ak * 0.6; ctx.fillStyle = T.cardHair; ctx.fillRect(0, y - 10, cw, 1);
+        const per = krows * kcols, more = kids.length - per;
+        const colW = (cw - (kcols - 1) * 16) / kcols, gs = 6;
+        for (let i = 0; i < per && i < kids.length; i++) {
+          const c = kids[i], cx = (i % kcols) * (colW + 16), cy = y + Math.floor(i / kcols) * KROW + 4;
+          const last = more > 0 && i === per - 1;
+          ctx.globalAlpha = cardA * ak;
+          if (last || c.quiet) {
+            ctx.fillStyle = T.label3; setFont(400, 13);
+            const extra = last ? kids.slice(per - 1).reduce((t, k) => t + (k.quiet ? (parseInt(String(k.label).replace(/\D+/g, ''), 10) || 1) : 1), 0) : 0;
+            put(last ? `+${extra} more` : String(c.label ?? c.id), cx + gs + 8, cy + 1, colW - gs - 8, 13);
+          } else {
+            ctx.globalAlpha = cardA * ak * 0.8; ctx.fillStyle = tintOf(c); ctx.strokeStyle = tintOf(c); ctx.lineWidth = 1.2;
+            ctx.beginPath(); ctx.arc(cx + 3, cy + 7.5, notBuilt(c) ? 2.1 : 2.5, 0, Math.PI * 2); if (notBuilt(c)) ctx.stroke(); else ctx.fill();
+            ctx.globalAlpha = cardA * ak; ctx.fillStyle = T.label2; setFont(400, 13);
+            put(String(c.label ?? c.id), cx + gs + 8, cy + 1, colW - gs - 8, 13);
+          }
+        }
+        y += krows * KROW;
+      }
+      if (qa > 0.01) {
+        y += 8; ctx.globalAlpha = cardA * qa; ctx.fillStyle = T.label3; setFont(400, 12, MONO);
+        for (const l of quietList) { put(l, 0, y + 3, cw, 12); y += 18; }
+      }
+      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    }
+    ctx.restore();
+  }
+
+  // small capsules ("Proposed", "Inferred") at the end of a title row; returns the width they take
+  function chipsWidth(tags, fs) { setFont(600, fs); return tags.reduce((w, t) => w + ctx.measureText(t).width + fs * 1.1 + 6, 0); }
+  function drawChips(tags, xRight, yMid, fs, a) {
+    let x = xRight; setFont(600, fs); ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+    for (let i = tags.length - 1; i >= 0; i--) {
+      const t = tags[i], w = ctx.measureText(t).width + fs * 1.1, h = Math.round(fs * 1.55);
+      x -= w;
+      ctx.globalAlpha = a; ctx.beginPath(); ctx.roundRect(x, yMid - h / 2, w, h, h / 2);
+      if (t === 'Inferred') { ctx.strokeStyle = T.label3; ctx.lineWidth = 1; ctx.setLineDash([2.5, 2]); ctx.stroke(); ctx.setLineDash([]); }
+      else { ctx.fillStyle = T.chip; ctx.fill(); }
+      ctx.fillStyle = T.label2; ctx.fillText(t, x + fs * 0.55, yMid + 0.5);
+      x -= 6;
+    }
+    ctx.textBaseline = 'top';
+  }
+
+  // the first screen: one calm, centered card
+  function drawHero(v, a, pad) {
+    const { n, sx, sy, sw, sh } = v;
+    const s = clamp(Math.min(sw / 560, sh / 350), 0.6, 1.6);
+    const w = sw / s, h = sh / s;
+    const gs = 56, tfs = 40, bfs = 17, blh = 24;
+    const lines = n.shortDescription ? wrapBalanced(n.shortDescription, `400 ${bfs}px ${FONT}`, Math.min(w - 64, 440)) : [];
+    const showDesc = lines.length && lines.length <= 3 && bfs * s >= MIN_TEXT_PX;
+    const meta = 13 * s >= MIN_TEXT_PX ? n.meta || '' : '';
+    const blockH = gs + 20 + tfs * 1.2 + (showDesc ? 12 + lines.length * blh : 0) + (meta ? 20 + 16 : 0);
+    if (blockH > h - 16 || tfs * s < MIN_TEXT_PX) return;
+    const ox = sx, oy = sy + ((h - blockH) / 2) * s;
+    ctx.setTransform(DPR * s, 0, 0, DPR * s, DPR * ox, DPR * oy);
+    frameT = { ox, oy, s, box: v };
+    glyph(n, (w - gs) / 2, 0, gs, a);
+    ctx.textBaseline = 'top'; ctx.globalAlpha = a;
+    let y = gs + 20;
+    const cx = w / 2;
+    const centered = (text, size, maxW) => { const tw = Math.min(ctx.measureText(text).width, maxW); return put(text, cx - tw / 2, y, maxW, size, true); };
+    ctx.fillStyle = T.label; setFont(600, tfs); ctx.textAlign = 'left';
+    centered(String(n.label ?? n.id), tfs, w - 48); y += tfs * 1.2;
+    if (showDesc) { y += 12; ctx.fillStyle = T.label2; setFont(400, bfs); for (const l of lines) { centered(l, bfs, w - 48); y += blh; } }
+    if (meta) { y += 18; ctx.fillStyle = T.label3; setFont(500, 13); centered(meta, 13, w - 48); }
+  }
+
+  function drawSelection() {
+    const v = selected && vis.get(selected);
+    if (!v || v.t > 0.6) return;
+    const r = radiusFor(v);
+    ctx.globalAlpha = v.alpha * (1 - v.t / 0.6) * 0.9; ctx.strokeStyle = tintOf(selected); ctx.lineWidth = 2;
+    squircle(v.sx - 3, v.sy - 3, v.sw + 6, v.sh + 6, r + 3); ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+  function render() {
+    if (window.__szProfile) { const t0 = performance.now(); renderInner(); window.__szProfile.push(performance.now() - t0); return; }
+    renderInner();
+  }
+  function renderInner() {
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.clearRect(0, 0, W, H);
+    fading = false;
+    collect();
+    drawGrid();
+    drawBoxes();
+    for (const v of visible) drawCard(v);
+    drawSelection();
+    drawRelations(performance.now());
+    ctx.globalAlpha = 1;
+    updateHud();
+    updateInspector();
+    if ((fading || relAnimating) && !rafId) rafId = requestAnimationFrame(frame); // render() may be called outside the loop
+  }
+
+  // ---------------------------------------------------------------- HUD: breadcrumb + segmented level control + icons
+  const LEVEL_NAMES = Array.isArray(DATA.meta?.levelNames) && DATA.meta.levelNames.length
+    ? DATA.meta.levelNames.map((x) => { const t = String(x); return t.charAt(0).toUpperCase() + t.slice(1); })
+    : ['System', 'Packages', 'Modules', 'Files'];
+  const crumbsEl = $('crumbs'), segEl = $('seg'), thumb = segEl.querySelector('.thumb');
+  const segBtns = [];
+  for (let i = 0; i < levels; i++) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.textContent = LEVEL_NAMES[i] || `Level ${i + 1}`; b.setAttribute('aria-pressed', 'false');
+    b.addEventListener('click', () => { dismissHint(); goToLevel(i + 1); });
+    segEl.appendChild(b); segBtns.push(b);
+  }
+  const chevron = () => {
+    const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    s.setAttribute('viewBox', '0 0 12 12'); s.setAttribute('class', 'sep'); s.setAttribute('aria-hidden', 'true');
+    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    p.setAttribute('d', 'M4.5 2.5 8 6l-3.5 3.5'); p.setAttribute('fill', 'none'); p.setAttribute('stroke', 'currentColor');
+    p.setAttribute('stroke-width', '1.4'); p.setAttribute('stroke-linecap', 'round'); p.setAttribute('stroke-linejoin', 'round');
+    s.appendChild(p); return s;
+  };
+  let crumbKey = '', levelKey = -1;
+  function currentLevel() {
+    // the level being read: children of the focused group; a closed root card is level 1
+    const rootV = vis.get(DATA.root);
+    if (!focused) return rootV && rootV.t < 0.5 ? 1 : 2;
+    return Math.min(levels, focused.depth + 2);
+  }
+  // node at a given depth under the screen centre (falls back to the biggest child)
+  function nodeAtDepth(depth) {
+    let n = DATA.root;
+    const cx = toWX(W / 2), cy = toWY(H / 2);
+    while (n.depth < depth && n.children.length) {
+      n = n.children.find((c) => cx >= c.x && cx <= c.x + c.w && cy >= c.y && cy <= c.y + c.h)
+        || n.children.reduce((a, b) => (a.w * a.h >= b.w * b.h ? a : b));
+    }
+    return n;
+  }
+  function goToLevel(level) {
+    if (level <= 1) flyTo(homeView());
+    else if (level === 2) flyTo(overviewView());
+    else flyTo(fitFocus(nodeAtDepth(level - 2)));
+  }
+  function updateHud() {
+    const path = focusPath.length ? focusPath : [DATA.root];
+    const key = path.map((p) => p.id).join('\u0000');
+    if (key !== crumbKey) {
+      crumbKey = key;
+      crumbsEl.replaceChildren();
+      path.forEach((p, i) => {
+        if (i) crumbsEl.appendChild(chevron());
+        const b = document.createElement('button');
+        b.type = 'button'; b.textContent = String(p.label ?? p.id);
+        if (i === path.length - 1) b.setAttribute('aria-current', 'location');
+        b.addEventListener('click', () => { dismissHint(); flyTo(fitFocus(p)); });
+        crumbsEl.appendChild(b);
+      });
+    }
+    const level = currentLevel();
+    if (level !== levelKey) {
+      levelKey = level;
+      segBtns.forEach((b, i) => b.setAttribute('aria-pressed', String(i === level - 1)));
+      placeThumb();
+    }
+  }
+  function placeThumb() {
+    const b = segBtns[levelKey - 1];
+    if (!b) return;
+    thumb.style.width = b.offsetWidth + 'px';
+    thumb.style.transform = `translateX(${b.offsetLeft - 2}px)`;
+  }
+
+  // ---------------------------------------------------------------- inspector: "Talks to" / "Used by" for the selected card
+  const insp = $('insp');
+  let inspKey = '', inspMode = 'node', inspT = 0;
+  function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = String(text); return e; }
+  function kindSample(kind, color) { // tiny canvas: a line in the kind's stroke plus its glyph
+    const c = document.createElement('canvas'), w = 60, h = 18, d = window.devicePixelRatio || 1;
+    c.width = w * d; c.height = h * d; c.style.width = w + 'px'; c.style.height = h + 'px'; c.setAttribute('aria-hidden', 'true');
+    const g = c.getContext('2d'); g.scale(d, d);
+    g.strokeStyle = color; g.lineWidth = kind === 'queue' ? 2.1 : 1.5; g.lineCap = 'round'; g.setLineDash(KINDS[kind].dash);
+    g.beginPath(); g.moveTo(2, h / 2); g.lineTo(w - 20, h / 2); g.stroke(); g.setLineDash([]);
+    kindGlyph(g, kind, w - 9, h / 2, 12, color);
+    return c;
+  }
+  function inspectorRows(S) {
+    // every relation with exactly one end inside S, the other end rolled up to what is drawn now
+    const rows = new Map();
+    for (const r of RELS) {
+      const ia = within(S, r.a), ib = within(S, r.b);
+      if (ia === ib) continue;
+      const dir = ia ? 1 : -1, other = primaryRep(ia ? r.b : r.a);
+      if (!other || within(S, other) || isAnc(other, S)) continue;
+      const key = dir + '|' + other.id;
+      let row = rows.get(key);
+      if (!row) { row = { dir, other, rels: [], kinds: {}, count: 0 }; rows.set(key, row); }
+      row.rels.push(r); row.kinds[r.kind] = (row.kinds[r.kind] || 0) + r.count; row.count += r.count;
+    }
+    for (const row of rows.values()) {
+      let best = 'import', bs = -1;
+      for (const k in row.kinds) { const s = KINDS[k].w * Math.log2(1 + row.kinds[k]); if (s > bs) { bs = s; best = k; } }
+      row.primary = best; row.score = bs;
+    }
+    return [...rows.values()];
+  }
+  function rowLabel(S, row) {
+    const ru = row.dir > 0 ? rollup(S, row.other) : rollup(row.other, S);
+    if (ru && ru.label) return String(ru.label);
+    const rs = row.rels.filter((r) => r.kind === row.primary).sort((p, q) => q.count - p.count);
+    if (row.primary === 'http') { const n = new Set(rs.flatMap((r) => r.details)).size; return n > 1 ? `${n} API routes` : (rs[0].details[0] || rs[0].label); }
+    return rs[0].label + (rs.length > 1 ? ` +${rs.length - 1}` : '');
+  }
+  let inspTab = 1, inspOpenEv = new Set();
+  function updateInspector() {
+    if (activeFlow) { if (inspMode !== 'flow') flowPanel(); return; }
+    if (inspMode === 'flow') { inspMode = 'node'; inspKey = ''; insp.classList.remove('on'); }
+    const S = selected;
+    if (!S) { if (inspKey || insp.classList.contains('on')) { inspKey = ''; insp.classList.remove('on'); insp.setAttribute('aria-hidden', 'true'); inspHover = null; } return; }
+    const now = performance.now();
+    if (inspKey && inspKey.startsWith(S.id + '\u0000') && now - inspT < 180) return; // rows only change as levels cross, no need per frame
+    inspT = now;
+    const rows = inspectorRows(S);
+    const key = S.id + '\u0000' + (T === THEMES.dark ? 'd' : 'l') + inspTab + '\u0000' + [...inspOpenEv].join(',') + '\u0000' + rows.map((r) => r.dir + r.other.id).sort().join(',');
+    if (key === inspKey) return;
+    if (!inspKey.startsWith(S.id + '\u0000')) { inspOpenEv = new Set(); inspTab = rows.some((r) => r.dir > 0) || !rows.length ? 1 : -1; }
+    inspKey = key;
+    const scroll = insp.querySelector('.insp-body')?.scrollTop || 0;
+    insp.replaceChildren();
+    const head = el('div', 'insp-head');
+    const ttl = el('div', 'insp-ttl');
+    ttl.appendChild(el('div', 'insp-title', S.label ?? S.id));
+    if (S.path) ttl.appendChild(el('div', 'insp-path', S.path));
+    head.appendChild(ttl);
+    const stTags = statusTags(S);
+    const close = el('button', 'icon close'); close.type = 'button'; close.title = 'Close (Esc)'; close.setAttribute('aria-label', 'Close');
+    close.appendChild(svgIcon('M4 4l8 8M12 4l-8 8'));
+    close.addEventListener('click', () => { selected = null; requestRender(); });
+    head.appendChild(close);
+    insp.appendChild(head);
+    if (stTags.length || typeof S.statusNote === 'string') {
+      const sb = el('div', 'insp-status');
+      for (const t of stTags) sb.appendChild(el('span', 'stag' + (t === 'Inferred' ? ' dash' : ''), t));
+      if (!stTags.length && statusOf(S) === '' && S.status === 'built') sb.appendChild(el('span', 'stag', 'Built'));
+      if (typeof S.statusNote === 'string' && S.statusNote) sb.appendChild(el('div', 'insp-note', S.statusNote));
+      insp.appendChild(sb);
+    }
+    // segmented control: Talks to | Used by
+    const seg = el('div', 'iseg'); seg.setAttribute('role', 'tablist');
+    for (const [dir, name] of [[1, 'Talks to'], [-1, 'Used by']]) {
+      const n = rows.filter((r) => r.dir === dir).length;
+      const b = el('button', ''); b.type = 'button'; b.setAttribute('role', 'tab'); b.setAttribute('aria-selected', String(inspTab === dir));
+      b.appendChild(el('span', '', name)); b.appendChild(el('span', 'sn', n));
+      b.addEventListener('click', () => { inspTab = dir; inspKey = S.id + '\u0000'; inspT = 0; updateInspector(); });
+      seg.appendChild(b);
+    }
+    insp.appendChild(seg);
+    const body = el('div', 'insp-body');
+    const color = tintOf(S);
+    const rs = rows.filter((r) => r.dir === inspTab);
+    for (const kind of KIND_ORDER) {
+      const ks = rs.filter((r) => r.primary === kind).sort((p, q) => q.score - p.score);
+      if (!ks.length) continue;
+      const kh = el('div', 'kindh'); kh.appendChild(kindSample(kind, color)); kh.appendChild(el('span', '', KINDS[kind].name)); kh.appendChild(el('span', 'kd', KINDS[kind].desc));
+      body.appendChild(kh);
+      for (const row of ks) {
+        const rk = row.dir + '|' + row.other.id;
+        const wrap = el('div', 'irow');
+        const b = el('button', 'row'); b.type = 'button'; b.title = `Show ${row.other.label ?? row.other.id}`;
+        const bb = el('div', 'rb');
+        const top = el('div', 'rt'); top.appendChild(el('span', 't', row.other.label ?? row.other.id)); top.appendChild(el('span', 'cap', row.count > 999 ? (row.count / 1000).toFixed(1) + 'k' : row.count));
+        bb.appendChild(top);
+        const rd = el('div', 'd', rowLabel(S, row));
+        const rt = tentativeOf(row.rels); if (rt) rd.appendChild(el('span', 'tag', rt));
+        bb.appendChild(rd);
+        b.appendChild(bb);
+        b.addEventListener('mouseenter', () => { inspHover = { S, other: row.other, dir: row.dir }; requestRender(); });
+        b.addEventListener('mouseleave', () => { inspHover = null; requestRender(); });
+        b.addEventListener('click', () => { inspHover = null; flyTo(fitFor(row.other)); });
+        wrap.appendChild(b);
+        const ev = [], seenF = new Set();
+        for (const r of [...row.rels].sort((p, q) => q.count - p.count)) for (const e of r.evidence) {
+          if (ev.length >= 4 || seenF.has(e[0] + e[1])) continue;
+          seenF.add(e[0] + e[1]); ev.push(e);
+        }
+        if (ev.length) {
+          const open = inspOpenEv.has(rk);
+          const dz = el('button', 'disc'); dz.type = 'button'; dz.setAttribute('aria-expanded', String(open));
+          dz.appendChild(svgIcon('M6 4l4 4-4 4')); dz.appendChild(el('span', '', open ? 'Hide evidence' : `Evidence · ${ev.length}`));
+          dz.addEventListener('click', () => { if (inspOpenEv.has(rk)) inspOpenEv.delete(rk); else inspOpenEv.add(rk); inspKey = S.id + '\u0000'; inspT = 0; updateInspector(); });
+          wrap.appendChild(dz);
+          if (open) for (const e of ev) {
+            const line = el('div', 'ev');
+            line.appendChild(el('span', 'evf', `${e[0].split('/').pop()}:${e[1]}`));
+            line.appendChild(el('span', 'evs', e[2].trim()));
+            line.title = `${e[0]}:${e[1]}  ${e[2].trim()}`;
+            wrap.appendChild(line);
+          }
+        }
+        body.appendChild(wrap);
+      }
+    }
+    if (!rs.length) body.appendChild(el('div', 'empty-note', inspTab > 0 ? 'Doesn’t call anything outside itself.' : 'Nothing outside it uses this.'));
+    insp.appendChild(body);
+    body.scrollTop = scroll;
+    if (!insp.classList.contains('on')) { insp.classList.add('on'); insp.setAttribute('aria-hidden', 'false'); keepClearOfPanel(S); }
+  }
+  // the panel covers the right edge: slide the camera so the selection is not hidden under it
+  function keepClearOfPanel(n) {
+    const r = srect(n), edge = W - 372;
+    if (r.sx + r.sw <= edge || fly) return;
+    const dx = Math.min(r.sx + r.sw - edge + 16, r.sx - 24);
+    if (dx > 0) flyTo({ x: cam.x + dx / cam.scale, y: cam.y, scale: cam.scale }, 480);
+  }
+  function svgIcon(d) {
+    const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    s.setAttribute('width', '16'); s.setAttribute('height', '16'); s.setAttribute('viewBox', '0 0 16 16'); s.setAttribute('aria-hidden', 'true');
+    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    p.setAttribute('d', d); p.setAttribute('fill', 'none'); p.setAttribute('stroke', 'currentColor'); p.setAttribute('stroke-width', '1.7'); p.setAttribute('stroke-linecap', 'round'); p.setAttribute('stroke-linejoin', 'round');
+    s.appendChild(p); return s;
+  }
+
+  // ---------------------------------------------------------------- popovers: legend + flows (above the capsule)
+  const pop = $('pop'), flowsBtn = $('flowsBtn'), legendBtn = $('legendBtn');
+  let popKind = null;
+  function placePop(btn) {
+    const r = btn.getBoundingClientRect(), w = pop.offsetWidth || 340;
+    pop.style.left = clamp(r.left + r.width / 2 - w / 2, 12, W - w - 12) + 'px';
+  }
+  function openPop(kind) {
+    popKind = kind;
+    flowsBtn.setAttribute('aria-expanded', String(kind === 'flows'));
+    legendBtn.setAttribute('aria-expanded', String(kind === 'legend'));
+    if (!kind) { pop.classList.remove('on'); pop.setAttribute('aria-hidden', 'true'); return; }
+    pop.replaceChildren();
+    if (kind === 'legend') buildLegend(); else buildFlows();
+    pop.setAttribute('aria-label', kind === 'legend' ? 'Legend' : 'Flows');
+    pop.classList.add('on'); pop.setAttribute('aria-hidden', 'false');
+    placePop(kind === 'legend' ? legendBtn : flowsBtn);
+  }
+  function buildLegend() {
+    pop.appendChild(el('div', 'pop-h', 'Relationships'));
+    const color = T.label2;
+    for (const k of KIND_ORDER) {
+      const n = RELS.filter((r) => r.kind === k).length;
+      if (!n) continue;
+      const row = el('button', 'row legend-row'); row.type = 'button'; row.setAttribute('role', 'menuitemcheckbox'); row.setAttribute('aria-checked', String(kindOn[k]));
+      row.title = kindOn[k] ? `Hide ${KINDS[k].name} edges` : `Show ${KINDS[k].name} edges`;
+      const ck = el('span', 'ck'); ck.appendChild(svgIcon('M3.5 8.5l3 3 6-7')); row.appendChild(ck);
+      row.appendChild(kindSample(k, color));
+      const tx = el('div', 'lt'); tx.appendChild(el('div', 't', KINDS[k].name)); tx.appendChild(el('div', 'd', KINDS[k].desc));
+      row.appendChild(tx); row.appendChild(el('span', 'cap', n));
+      row.addEventListener('click', () => { kindOn[k] = !kindOn[k]; if (selected) { inspKey = selected.id + '\u0000'; inspT = 0; } openPop('legend'); requestRender(); });
+      pop.appendChild(row);
+    }
+    pop.appendChild(el('div', 'pop-foot', 'Click a type to hide or show it. Hover or click a card to see what it talks to; edges merge into the box that holds them as you zoom out.'));
+    const tg = el('button', 'row toggle'); tg.type = 'button'; tg.setAttribute('role', 'switch'); tg.setAttribute('aria-checked', String(edgesOn));
+    tg.appendChild(el('span', 't', 'Show key relationships at rest')); tg.appendChild(el('span', 'sw'));
+    tg.addEventListener('click', () => { edgesOn = !edgesOn; tg.setAttribute('aria-checked', String(edgesOn)); requestRender(); });
+    pop.appendChild(tg);
+  }
+  let flowStepEls = [];
+  function buildFlows() {
+    flowStepEls = [];
+    {
+      pop.appendChild(el('div', 'pop-h', 'Flows'));
+      pop.appendChild(el('div', 'pop-sub', 'How a request travels through the system, end to end.'));
+      for (const f of FLOWS) {
+        const b = el('button', 'row'); b.type = 'button';
+        const body = el('div', 'rb'); const top = el('div', 'rt');
+        top.appendChild(el('span', 't', f.title)); top.appendChild(el('span', 'cnt', `${f.steps.length} steps`));
+        body.appendChild(top); body.appendChild(el('div', 'd', f.summary));
+        b.appendChild(body);
+        if (f === activeFlow) b.classList.add('cur');
+        b.addEventListener('click', () => (f === activeFlow ? stopFlow() : startFlow(f)));
+        pop.appendChild(b);
+      }
+      if (!FLOWS.length) pop.appendChild(el('div', 'empty-note', 'No flows in this tree.'));
+      if (activeFlow) {
+        const stop = el('button', 'row toggle'); stop.type = 'button'; stop.appendChild(el('span', 't', 'Stop flow'));
+        stop.addEventListener('click', () => { stopFlow(); openPop(null); }); pop.appendChild(stop);
+      }
+    }
+  }
+  function flowPanel() {
+    const f = activeFlow;
+    inspMode = 'flow'; inspKey = ''; flowStepEls = [];
+    insp.replaceChildren();
+    const head = el('div', 'insp-head');
+    const ttl = el('div', 'insp-ttl');
+    const k = el('div', 'insp-kicker', 'Flow'); ttl.appendChild(k);
+    ttl.appendChild(el('div', 'insp-title', f.title));
+    head.appendChild(ttl);
+    const close = el('button', 'icon close'); close.type = 'button'; close.title = 'Stop (Esc)'; close.setAttribute('aria-label', 'Stop flow');
+    close.appendChild(svgIcon('M4 4l8 8M12 4l-8 8')); close.addEventListener('click', () => stopFlow());
+    head.appendChild(close); insp.appendChild(head);
+    insp.appendChild(el('div', 'pop-sub', f.summary));
+    if (f.status) { const sb = el('div', 'insp-status'); sb.appendChild(el('div', 'insp-note', f.status)); insp.appendChild(sb); }
+    // transport: previous / play-pause / next, like a media control
+    const tr = el('div', 'transport');
+    const mk = (d, label, fn) => { const b = el('button', 'icon'); b.type = 'button'; b.title = label; b.setAttribute('aria-label', label); b.appendChild(svgIcon(d)); b.addEventListener('click', fn); tr.appendChild(b); return b; };
+    mk('M10.5 3.5 6 8l4.5 4.5', 'Previous step (←)', () => stepFlow(-1));
+    flowPlayBtn = mk('M5 3.5v9l7-4.5z', 'Pause (Space)', () => toggleFlowPause());
+    mk('M5.5 3.5 10 8l-4.5 4.5', 'Next step (→)', () => stepFlow(1));
+    flowPosEl = el('span', 'pos', ''); tr.appendChild(flowPosEl);
+    insp.appendChild(tr);
+    const list = el('div', 'insp-body');
+    f.steps.forEach((st, i) => {
+      const b = el('button', 'row step'); b.type = 'button';
+      b.appendChild(el('span', 'num', i + 1));
+      const body = el('div', 'rb');
+      const t = el('div', 't', st.text || `${st.a.label} → ${st.b.label}`);
+      for (const tg of st.tags || (st.detected ? [] : ['inferred'])) t.appendChild(el('span', 'tag', tg));
+      body.appendChild(t);
+      body.appendChild(el('div', 'd', `${st.a.label ?? st.a.id} → ${st.b.label ?? st.b.id} · ${KINDS[st.kind].name}`));
+      b.appendChild(body);
+      b.addEventListener('click', () => goStep(i));
+      list.appendChild(b); flowStepEls.push(b);
+    });
+    if (f.footnote) list.appendChild(el('div', 'pop-foot', f.footnote));
+    else if (f.steps.some((x) => !x.detected)) list.appendChild(el('div', 'pop-foot', 'Steps tagged inferred were suggested from summaries, not found in code.'));
+    insp.appendChild(list);
+    flowStepShown = -1;
+    insp.classList.add('on'); insp.setAttribute('aria-hidden', 'false');
+  }
+  let flowPlayBtn = null, flowPosEl = null;
+  function syncFlowSteps() {
+    flowStepEls.forEach((b, i) => b.classList.toggle('cur', i === flowStepShown));
+    if (flowPosEl && activeFlow) flowPosEl.textContent = flowStepShown < activeFlow.steps.length ? `${flowStepShown + 1} of ${activeFlow.steps.length}` : `${activeFlow.steps.length} of ${activeFlow.steps.length}`;
+    if (flowPlayBtn) {
+      const paused = !!flowFreeze;
+      flowPlayBtn.title = paused ? 'Play (Space)' : 'Pause (Space)'; flowPlayBtn.setAttribute('aria-label', paused ? 'Play' : 'Pause');
+      flowPlayBtn.querySelector('path').setAttribute('d', paused ? 'M5 3.5v9l7-4.5z' : 'M5.5 3.5v9M10.5 3.5v9');
+    }
+    const cur = flowStepEls[flowStepShown];
+    if (cur && cur.scrollIntoView) cur.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+  function goStep(i) {
+    const n = activeFlow.steps.length; i = clamp(i, 0, n - 1);
+    flowTour = true; flowStepShown = -1;
+    if (flowFreeze) flowFreeze = { i, u: 0.62 }; else flowT0 = performance.now() - i * STEP_MS;
+    requestRender();
+  }
+  function stepFlow(d) { if (activeFlow) goStep(Math.min(flowClock(performance.now()).i, activeFlow.steps.length - 1) + d); }
+  function toggleFlowPause() {
+    if (!activeFlow) return;
+    const now = performance.now();
+    if (flowFreeze) { flowT0 = now - (flowFreeze.i + flowFreeze.u) * STEP_MS; flowFreeze = null; }
+    else { const c = flowClock(now); flowFreeze = { i: Math.min(c.i, activeFlow.steps.length - 1), u: c.i >= activeFlow.steps.length ? 0.62 : c.u }; }
+    syncFlowSteps(); requestRender();
+  }
+  function flyToNodes(list, margin = 0.86, ms = FLY_MS) {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const n of list) { x0 = Math.min(x0, n.x); y0 = Math.min(y0, n.y); x1 = Math.max(x1, n.x + n.w); y1 = Math.max(y1, n.y + n.h); }
+    const w = x1 - x0, h = y1 - y0, right = insp.classList.contains('on') || activeFlow ? 360 : 0;
+    const want = Math.min(((W - right) * margin) / w, ((H - 120) * margin) / h), floor = overviewView().scale;
+    let sc = clampScale(Math.max(floor, want)); // never so far out that the map closes
+    // never park the camera mid-crossfade: a box holding only some of the nodes is either open or closed
+    let k = 1;
+    const closing = new Set();
+    for (const n of list) for (let a = n.parent; a && a.parent; a = a.parent) {
+      if (list.every((m) => within(a, m))) continue;
+      const fill = Math.max((a.w * sc) / W, (a.h * sc) / H);
+      if (fill > 0.48 && fill < 0.84) { k = Math.min(k, 0.46 / fill); closing.add(a); }
+    }
+    if (k < 1) { // frame the closed boxes that will be drawn instead
+      sc = clampScale(Math.max(floor, sc * k));
+      x0 = y0 = Infinity; x1 = y1 = -Infinity;
+      for (const n of list) { let r = n; for (let a = n.parent; a && a.parent; a = a.parent) if (closing.has(a)) r = a; x0 = Math.min(x0, r.x); y0 = Math.min(y0, r.y); x1 = Math.max(x1, r.x + r.w); y1 = Math.max(y1, r.y + r.h); }
+    }
+    const shift = (W - right) / sc > (x1 - x0) * 1.08 ? right / 2 / sc : 0; // keep the subject clear of the side panel
+    flyTo({ x: (x0 + x1) / 2 + shift, y: (y0 + y1) / 2 + 30 / sc, scale: sc }, ms);
+  }
+  function flowBounds(f) {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const s of f.steps) for (const n of [s.a, s.b]) { x0 = Math.min(x0, n.x); y0 = Math.min(y0, n.y); x1 = Math.max(x1, n.x + n.w); y1 = Math.max(y1, n.y + n.h); }
+    return { x0, y0, x1, y1 };
+  }
+  function startFlow(f) {
+    activeFlow = f; flowT0 = performance.now(); flowFreeze = null; selected = null; flowTour = true; flowStepShown = -1;
+    flowsBtn.classList.add('active'); $('flowsLabel').textContent = f.title;
+    // show the smallest open box that holds every step, so steps read at module level
+    openPop(null); inspMode = 'node'; requestRender();
+  }
+  function stopFlow() {
+    activeFlow = null; flowFreeze = null; flowsBtn.classList.remove('active'); $('flowsLabel').textContent = 'Flows'; requestRender();
+    if (popKind === 'flows') openPop('flows');
+    updateInspector();
+  }
+  flowsBtn.addEventListener('click', () => { dismissHint(); openPop(popKind === 'flows' ? null : 'flows'); });
+  legendBtn.addEventListener('click', () => { dismissHint(); openPop(popKind === 'legend' ? null : 'legend'); });
+  if (!FLOWS.length) flowsBtn.style.display = 'none';
+  if (!RELS.length) { legendBtn.style.display = 'none'; }
+
+  // ---------------------------------------------------------------- picking + tooltip (only when the card hides its text)
+  function pick(sx, sy) {
+    for (let i = visible.length - 1; i >= 0; i--) {
+      const v = visible[i];
+      if (v.alpha < 0.5) continue;
+      if (sx >= v.sx && sx <= v.sx + v.sw && sy >= v.sy && sy <= v.sy + v.sh) return v;
+    }
+    return null;
+  }
+  const tip = $('tip');
+  let tipNode = null, tipTimer = 0;
+  let tipEdge = null;
+  function onHover(sx, sy) {
+    const e = edgeAt(sx, sy);
+    const ek = e ? e.key : null;
+    if (ek !== hoverEdge) { hoverEdge = ek; requestRender(); }
+    if (e) {
+      setHover(null); canvas.style.cursor = 'default';
+      if (tipEdge !== e.key) {
+        hideTip(); tipEdge = e.key;
+        const g = e.g, ru = rollup(g.A, g.B);
+        $('tipLabel').textContent = `${g.A.label ?? g.A.id} → ${g.B.label ?? g.B.id}`;
+        $('tipDesc').textContent = ru && ru.summary ? String(ru.summary) : groupLabel(g);
+        $('tipPath').textContent = kindsSummary(g.kinds); $('tipPath').style.display = '';
+        tipTimer = setTimeout(() => tip.classList.add('on'), 250);
+      }
+      const tw = tip.offsetWidth, th = tip.offsetHeight;
+      tip.style.left = Math.max(8, Math.min(W - tw - 8, sx + 16)) + 'px';
+      tip.style.top = Math.max(8, sy + 20 + th > H ? sy - th - 12 : sy + 20) + 'px';
+      return;
+    }
+    if (tipEdge) { hideTip(); }
+    const v = pick(sx, sy);
+    const card = v && v.t < 0.5 ? v.n : null; // open groups don't light up
+    setHover(card);
+    canvas.style.cursor = card ? 'pointer' : 'default';
+    if (!card || v.showsDesc || (!card.shortDescription && !card.path)) { hideTip(); return; }
+    if (card !== tipNode) {
+      hideTip(); tipNode = card;
+      $('tipLabel').textContent = String(card.label ?? card.id);
+      $('tipDesc').textContent = card.shortDescription || '';
+      $('tipPath').textContent = card.path || '';
+      $('tipPath').style.display = card.path ? '' : 'none';
+      tipTimer = setTimeout(() => tip.classList.add('on'), 450);
+    }
+    const tw = tip.offsetWidth, th = tip.offsetHeight;
+    tip.style.left = Math.max(8, Math.min(W - tw - 8, sx + 16)) + 'px';
+    tip.style.top = Math.max(8, sy + 20 + th > H ? sy - th - 12 : sy + 20) + 'px';
+  }
+  function hideTip() { clearTimeout(tipTimer); tip.classList.remove('on'); tipNode = null; tipEdge = null; }
+
+  // ---------------------------------------------------------------- input
+  const hint = $('hint');
+  let hintGone = false;
+  function dismissHint() { if (!hintGone) { hintGone = true; hint.classList.add('gone'); } }
+  canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    dismissHint(); hideTip(); flowTour = false;
+    let dy = e.deltaY;
+    if (e.deltaMode === 1) dy *= 16; else if (e.deltaMode === 2) dy *= H;
+    const k = e.ctrlKey ? PINCH_K : WHEEL_K;
+    zoomAt(e.clientX, e.clientY, Math.exp(-clamp(dy, -300, 300) * k));
+  }, { passive: false });
+
+  const pointers = new Map();
+  let pinch = null, drag = null, press = null;
+  canvas.addEventListener('pointerdown', (e) => {
+    canvas.setPointerCapture(e.pointerId);
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    fly = null; wheelAnim = null; hideTip(); dismissHint(); flowTour = false;
+    if (pointers.size === 1) { drag = { x: e.clientX, y: e.clientY }; press = { x: e.clientX, y: e.clientY, moved: false }; }
+    else { press = null; if (pointers.size === 2) { drag = null; pinch = pinchState(); } }
+  });
+  function pinchState() {
+    const [a, b] = [...pointers.values()];
+    return { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
+  }
+  canvas.addEventListener('pointermove', (e) => {
+    const p = pointers.get(e.pointerId);
+    if (!p) { onHover(e.clientX, e.clientY); return; }
+    p.x = e.clientX; p.y = e.clientY;
+    if (press && Math.hypot(e.clientX - press.x, e.clientY - press.y) > 4) press.moved = true;
+    if (pinch && pointers.size >= 2) {
+      const s = pinchState();
+      const wx = toWX(pinch.mx), wy = toWY(pinch.my);
+      const ns = clampScale(cam.scale * (s.d / pinch.d));
+      setCam(wx - (s.mx - W / 2) / ns, wy - (s.my - H / 2) / ns, ns);
+      pinch = s;
+    } else if (drag) {
+      if (!canvas.classList.contains('dragging')) canvas.classList.add('dragging');
+      setCam(cam.x - (e.clientX - drag.x) / cam.scale, cam.y - (e.clientY - drag.y) / cam.scale, cam.scale);
+      drag.x = e.clientX; drag.y = e.clientY;
+    }
+  });
+  const endPointer = (e) => {
+    pointers.delete(e.pointerId);
+    if (pointers.size < 2) pinch = null;
+    if (pointers.size === 1) { const [p] = pointers.values(); drag = { x: p.x, y: p.y }; }
+    if (pointers.size === 0) { drag = null; canvas.classList.remove('dragging'); }
+  };
+  function clickAt(sx, sy) {
+    if (popKind) openPop(null);
+    if (activeFlow) return;
+    const v = pick(sx, sy);
+    const card = v && v.t < 0.5 && v.n.parent && !v.n.quiet ? v.n : null;
+    selected = card; inspHover = null;
+    requestRender();
+  }
+  canvas.addEventListener('pointerup', (e) => {
+    const wasClick = press && !press.moved && pointers.size === 1;
+    endPointer(e);
+    if (wasClick && e.button === 0) clickAt(e.clientX, e.clientY);
+    press = null;
+  });
+  canvas.addEventListener('pointercancel', endPointer);
+  canvas.addEventListener('pointerleave', () => { if (!pointers.size) { hideTip(); setHover(null); } });
+  canvas.addEventListener('dblclick', (e) => {
+    e.preventDefault();
+    const v = pick(e.clientX, e.clientY);
+    if (!v) return;
+    const n = v.n;
+    flyTo(n === DATA.root ? overviewView() : fitFor(n));
+  });
+  const goHome = () => { flyTo(homeView()); };
+  $('fit').addEventListener('click', () => { dismissHint(); goHome(); });
+  $('zoomIn').addEventListener('click', () => { dismissHint(); zoomAt(W / 2, H / 2, 1.6); });
+  $('zoomOut').addEventListener('click', () => { dismissHint(); zoomAt(W / 2, H / 2, 1 / 1.6); });
+  window.addEventListener('keydown', (e) => {
+    if (e.target instanceof HTMLInputElement || e.ctrlKey || e.metaKey || e.altKey) return;
+    const onButton = e.target instanceof HTMLButtonElement;
+    const pan = 120 / cam.scale;
+    let handled = true;
+    if (e.key === '+' || e.key === '=') zoomAt(W / 2, H / 2, 1.5);
+    else if (e.key === '-' || e.key === '_') zoomAt(W / 2, H / 2, 1 / 1.5);
+    else if (e.key === '0') goHome();
+    else if (e.key === 'Escape') {
+      if (popKind) openPop(null);
+      else if (activeFlow) { stopFlow(); openPop(null); }
+      else if (selected) { selected = null; requestRender(); }
+      else goToLevel(currentLevel() - 1);
+    }
+    else if (activeFlow && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) stepFlow(e.key === 'ArrowLeft' ? -1 : 1);
+    else if (activeFlow && e.key === ' ' && !onButton) toggleFlowPause();
+    else if (e.key === 'ArrowLeft') flyTo({ x: cam.x - pan, y: cam.y, scale: cam.scale }, 260);
+    else if (e.key === 'ArrowRight') flyTo({ x: cam.x + pan, y: cam.y, scale: cam.scale }, 260);
+    else if (e.key === 'ArrowUp') flyTo({ x: cam.x, y: cam.y - pan, scale: cam.scale }, 260);
+    else if (e.key === 'ArrowDown') flyTo({ x: cam.x, y: cam.y + pan, scale: cam.scale }, 260);
+    else handled = false;
+    if (handled) { dismissHint(); if (!onButton || e.key.startsWith('Arrow')) e.preventDefault(); }
+  });
+  window.addEventListener('resize', () => { resize(); placeThumb(); if (popKind) placePop(popKind === 'legend' ? legendBtn : flowsBtn); });
+  // ---------------------------------------------------------------- appearance: System -> Light -> Dark
+  const THEME_KEY = 'loupe.appearance', themeBtn = $('themeBtn'), toast = $('toast');
+  const THEME_ICONS = { // SF-Symbols-like: circle.lefthalf.filled, sun.max, moon
+    system: ['M9 2.75a6.25 6.25 0 1 0 0 12.5a6.25 6.25 0 1 0 0-12.5z', 'M9 2.75v12.5a6.25 6.25 0 0 1 0-12.5z|fill'],
+    light: ['M9 6.1a2.9 2.9 0 1 0 0 5.8a2.9 2.9 0 1 0 0-5.8z', 'M9 1.8v1.6M9 14.6v1.6M1.8 9h1.6M14.6 9h1.6M3.9 3.9l1.15 1.15M12.95 12.95l1.15 1.15M3.9 14.1l1.15-1.15M12.95 5.05l1.15-1.15'],
+    dark: ['M14.6 11.2A6.3 6.3 0 0 1 6.8 3.4a6.3 6.3 0 1 0 7.8 7.8z'],
+  };
+  const THEME_NAMES = { system: 'System', light: 'Light', dark: 'Dark' }, NEXT = { system: 'light', light: 'dark', dark: 'system' };
+  function drawThemeIcon() {
+    const svg = themeBtn.querySelector('svg');
+    svg.replaceChildren();
+    for (const d of THEME_ICONS[themePref]) {
+      const [path, mode] = d.split('|');
+      const el2 = document.createElementNS('http://www.w3.org/2000/svg', 'path'); el2.setAttribute('d', path);
+      if (mode === 'fill') { el2.setAttribute('fill', 'currentColor'); el2.setAttribute('stroke', 'none'); }
+      svg.appendChild(el2);
+    }
+    const label = `Appearance: ${THEME_NAMES[themePref]}${themePref === 'system' ? (darkQuery && darkQuery.matches ? ' (dark)' : ' (light)') : ''}. Click for ${THEME_NAMES[NEXT[themePref]]}.`;
+    themeBtn.title = label; themeBtn.setAttribute('aria-label', label);
+  }
+  function applyTheme() {
+    const dark = themePref === 'dark' || (themePref === 'system' && !!darkQuery && darkQuery.matches);
+    const root = document.documentElement;
+    root.setAttribute('data-theme', dark ? 'dark' : 'light'); root.setAttribute('data-pref', themePref); root.style.colorScheme = dark ? 'dark' : 'light';
+    T = dark ? THEMES.dark : THEMES.light;
+    gridState[0] = gridState[1] = '';
+    inspKey = ''; inspT = 0;
+    if (activeFlow && inspMode === 'flow') { flowPanel(); syncFlowSteps(); }
+    if (popKind) openPop(popKind);
+    drawThemeIcon();
+    rafId && cancelAnimationFrame(rafId); rafId = 0;
+    render(); // synchronous: the canvas never shows a frame in the old palette
+    requestRender();
+  }
+  let toastTimer = 0;
+  themeBtn.addEventListener('click', () => {
+    dismissHint();
+    themePref = NEXT[themePref];
+    try { if (themePref === 'system') localStorage.removeItem(THEME_KEY); else localStorage.setItem(THEME_KEY, themePref); } catch (e) {}
+    applyTheme();
+    toast.textContent = `Appearance: ${THEME_NAMES[themePref]}`; toast.classList.add('on');
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => toast.classList.remove('on'), 1300);
+  });
+  drawThemeIcon();
+  if (darkQuery) {
+    const onScheme = () => { if (themePref === 'system') applyTheme(); else drawThemeIcon(); };
+    if (darkQuery.addEventListener) darkQuery.addEventListener('change', onScheme); else if (darkQuery.addListener) darkQuery.addListener(onScheme);
+  }
+  // another tab changed the choice
+  window.addEventListener('storage', (e) => { if (e.key === THEME_KEY) { themePref = e.newValue === 'light' || e.newValue === 'dark' ? e.newValue : 'system'; applyTheme(); } });
+
+  // ---------------------------------------------------------------- boot + test hook
+  resize();
+  { const h = homeView(); cam.x = h.x; cam.y = h.y; cam.scale = h.scale; }
+  render();
+  if (document.fonts) {
+    document.fonts.load(`600 16px ${FONT}`).catch(() => {});
+    document.fonts.ready.then(() => { wrapCache.clear(); requestRender(); placeThumb(); });
+  }
+
+  window.__sz = {
+    setCamera(x, y, scale) { fly = null; wheelAnim = null; setCam(+x, +y, +scale); render(); },
+    fitNode(id, animate = true) {
+      const n = byId.get(id);
+      if (!n) return false;
+      const t = fitFocus(n);
+      if (animate) flyTo(t); else this.setCamera(t.x, t.y, t.scale);
+      return true;
+    },
+    home(animate = false) { const h = homeView(); if (animate) flyTo(h); else this.setCamera(h.x, h.y, h.scale); },
+    get camera() { return { x: cam.x, y: cam.y, scale: cam.scale, fitScale, maxScale }; },
+    nodes,
+    rect(id) { const n = byId.get(id); if (!n) return null; rectCache = new Map(); return srect(n); },
+    visible() { return visible.map((v) => ({ id: v.n.id, depth: v.n.depth, alpha: v.alpha, openness: v.t, sx: v.sx, sy: v.sy, sw: v.sw, sh: v.sh })); },
+    focused() { return focused ? focused.id : null; },
+    hud() { return { crumbs: [...crumbsEl.querySelectorAll('button')].map((b) => b.textContent).join(' › '), level: LEVEL_NAMES[levelKey - 1] || String(levelKey) }; },
+    select(id) { selected = byId.get(id) || null; inspKey = '\u0001'; render(); return !!selected; },
+    hover(id) { const n = byId.get(id) || null; setHover(n); hoverK = n ? 1 : 0; hoverDir = 0; if (!n) hoverNode = null; render(); },
+    edges() { return drawnEdges.map((e) => ({ from: e.g.A.id, to: e.g.B.id, kind: e.g.primary, label: groupLabel(e.g), count: e.g.count, alpha: +e.a.toFixed(3), points: e.pts.length })); },
+    inspector() { return { open: insp.classList.contains('on'), text: insp.textContent, rows: insp.querySelectorAll('.irow').length }; },
+    popover(kind) { if (kind !== undefined) openPop(kind || null); return { kind: popKind, text: pop.textContent }; },
+    flows() { return FLOWS.map((f) => ({ id: f.id, title: f.title, steps: f.steps.length })); },
+    playFlow(id, step, u) { const f = FLOWS.find((x) => x.id === id); if (!f) { stopFlow(); return false; } if (activeFlow !== f) startFlow(f); flowFreeze = step == null ? null : { i: +step, u: +u || 0 }; requestRender(); return true; },
+    stopFlow() { stopFlow(); openPop(null); },
+    relations: RELS.length,
+    degree(id) { const n = byId.get(id); return n ? RELS.filter((r) => within(n, r.a) !== within(n, r.b)).length : 0; },
+    theme() { return { pref: themePref, resolved: T === THEMES.dark ? 'dark' : 'light', attr: document.documentElement.getAttribute('data-theme') }; },
+    setTheme(p) { themePref = p === 'light' || p === 'dark' ? p : 'system'; applyTheme(); },
+    checkText() { textCheck.on = true; textCheck.violations = []; textCheck.drawn = 0; render(); textCheck.on = false; return { drawn: textCheck.drawn, violations: textCheck.violations.slice() }; },
+    get animating() { return !!(fly || wheelAnim || fading); },
+    get edgeAnimating() { return relAnimating; },
+  };
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,1025 @@
+{
+  "meta": {
+    "source": "system manifest manifest.yaml",
+    "generatedAt": "2026-11-21T08:57:40.955Z",
+    "generator": "loupe manifest",
+    "levels": 4,
+    "levelNames": [
+      "system",
+      "groups",
+      "services",
+      "interfaces"
+    ],
+    "nodesPerLevel": [
+      1,
+      9,
+      18,
+      3
+    ],
+    "nodeCount": 31,
+    "relationCount": 25,
+    "relationKinds": {
+      "http": 4,
+      "external": 7,
+      "queue": 4,
+      "db": 4,
+      "import": 6
+    },
+    "flowCount": 3,
+    "statusCounts": {
+      "built": 5,
+      "branch": 1,
+      "unspecified": 7,
+      "proposed": 2,
+      "planned": 1
+    },
+    "inferredItems": 1
+  },
+  "root": {
+    "id": "system",
+    "label": "Bramble",
+    "kind": "system",
+    "path": "system manifest",
+    "shortDescription": "Bramble sells house plants online and delivers them by bike courier the same day.",
+    "longDescription": "Customers order in the web shop or the mobile app; a dispatch service hands each order to a courier.",
+    "weight": 688,
+    "children": [
+      {
+        "children": [
+          {
+            "children": [],
+            "edges": [],
+            "id": "svc:storefront#0",
+            "label": "Shop pages",
+            "kind": "endpoint",
+            "path": "web",
+            "shortDescription": "Catalog",
+            "longDescription": "",
+            "weight": 10
+          },
+          {
+            "children": [],
+            "edges": [],
+            "id": "svc:storefront#1",
+            "label": "Checkout",
+            "kind": "endpoint",
+            "path": "web",
+            "shortDescription": "Address",
+            "longDescription": "",
+            "weight": 10
+          }
+        ],
+        "edges": [],
+        "id": "svc:storefront",
+        "label": "Storefront",
+        "kind": "service",
+        "path": "bramble/storefront",
+        "shortDescription": "The web shop. Browses the catalog, runs checkout and shows order status.",
+        "longDescription": "Next.js.",
+        "serviceKind": "web app",
+        "weight": 80,
+        "status": "built"
+      },
+      {
+        "children": [
+          {
+            "children": [],
+            "edges": [],
+            "id": "svc:mobile-app#0",
+            "label": "Live tracking map",
+            "kind": "endpoint",
+            "path": "screen",
+            "shortDescription": "Courier position on a map (branch)",
+            "longDescription": "",
+            "weight": 10,
+            "status": "branch"
+          }
+        ],
+        "edges": [],
+        "id": "svc:mobile-app",
+        "label": "Mobile app",
+        "kind": "service",
+        "path": "bramble/mobile",
+        "shortDescription": "The customer app. Same shop as the web, plus live courier tracking.",
+        "longDescription": "",
+        "serviceKind": "mobile app",
+        "weight": 68,
+        "status": "built",
+        "statusNote": "built (tracking on a branch)"
+      },
+      {
+        "id": "repo:bramble-orders",
+        "label": "orders",
+        "kind": "repo",
+        "path": "bramble/orders",
+        "shortDescription": "Order intake and the jobs that move orders along.",
+        "longDescription": "One repo, two deployables.",
+        "weight": 140,
+        "children": [
+          {
+            "children": [
+              {
+                "children": [],
+                "edges": [],
+                "id": "svc:orders-api#0",
+                "label": "POST /orders",
+                "kind": "endpoint",
+                "path": "rest",
+                "shortDescription": "Place an order",
+                "longDescription": "",
+                "weight": 10
+              },
+              {
+                "children": [],
+                "edges": [],
+                "id": "svc:orders-api#1",
+                "label": "GET /orders/:id",
+                "kind": "endpoint",
+                "path": "rest",
+                "shortDescription": "Order status",
+                "longDescription": "",
+                "weight": 10
+              },
+              {
+                "children": [],
+                "edges": [],
+                "id": "svc:orders-api#2",
+                "label": "POST /webhooks/stripe",
+                "kind": "endpoint",
+                "path": "webhook",
+                "shortDescription": "Payment events from Stripe",
+                "longDescription": "",
+                "weight": 10
+              }
+            ],
+            "edges": [],
+            "id": "svc:orders-api",
+            "label": "Orders API",
+            "kind": "service",
+            "path": "bramble/orders",
+            "shortDescription": "Takes orders, prices them and records payment.",
+            "longDescription": "The source of truth for an order. Runs as: container behind the load balancer.",
+            "serviceKind": "http service",
+            "weight": 84,
+            "status": "built"
+          },
+          {
+            "children": [],
+            "edges": [],
+            "id": "svc:orders-worker",
+            "label": "Orders worker",
+            "kind": "service",
+            "path": "bramble/orders",
+            "shortDescription": "Background jobs for orders.",
+            "longDescription": "Sends receipts and expires unpaid carts.",
+            "serviceKind": "worker",
+            "weight": 56,
+            "status": "built"
+          }
+        ],
+        "edges": []
+      },
+      {
+        "children": [
+          {
+            "children": [],
+            "edges": [],
+            "id": "svc:dispatch#0",
+            "label": "Courier app API",
+            "kind": "endpoint",
+            "path": "rest",
+            "shortDescription": "Couriers accept jobs and post their position",
+            "longDescription": "",
+            "weight": 10
+          },
+          {
+            "children": [],
+            "edges": [],
+            "id": "svc:dispatch#1",
+            "label": "Tracking socket",
+            "kind": "endpoint",
+            "path": "websocket",
+            "shortDescription": "Pushes courier position to customers (branch)",
+            "longDescription": "",
+            "weight": 10,
+            "status": "branch"
+          }
+        ],
+        "edges": [],
+        "id": "svc:dispatch",
+        "label": "Dispatch",
+        "kind": "service",
+        "path": "bramble/dispatch",
+        "shortDescription": "Assigns each paid order to the nearest free courier and tracks the drop-off.",
+        "longDescription": "",
+        "serviceKind": "http service",
+        "weight": 96,
+        "status": "built"
+      },
+      {
+        "children": [],
+        "edges": [],
+        "id": "svc:care",
+        "label": "Plant care",
+        "kind": "service",
+        "path": "bramble/care",
+        "shortDescription": "Sends watering and repotting reminders for plants a customer bought.",
+        "longDescription": "New; on a branch.",
+        "serviceKind": "worker",
+        "weight": 64,
+        "status": "branch",
+        "statusNote": "Open PR; behind a feature flag"
+      },
+      {
+        "id": "grp:datastores",
+        "label": "Datastores",
+        "kind": "group",
+        "path": "data",
+        "shortDescription": "Databases, caches and buckets the services read and write.",
+        "longDescription": "",
+        "weight": 120,
+        "children": [
+          {
+            "children": [],
+            "edges": [],
+            "id": "ds:orders-db",
+            "label": "Orders DB",
+            "kind": "datastore",
+            "path": "postgres",
+            "shortDescription": "Orders, line items and payments.",
+            "longDescription": "",
+            "weight": 30
+          },
+          {
+            "children": [],
+            "edges": [],
+            "id": "ds:dispatch-db",
+            "label": "Dispatch DB",
+            "kind": "datastore",
+            "path": "postgres",
+            "shortDescription": "Couriers, assignments and delivery events.",
+            "longDescription": "",
+            "weight": 30
+          },
+          {
+            "children": [],
+            "edges": [],
+            "id": "ds:order-events",
+            "label": "Order events",
+            "kind": "datastore",
+            "path": "queue",
+            "shortDescription": "Topic for order lifecycle events (order.paid, order.delivered).",
+            "longDescription": "",
+            "weight": 30
+          },
+          {
+            "children": [],
+            "edges": [],
+            "id": "ds:care-cache",
+            "label": "Care cache",
+            "kind": "datastore",
+            "path": "redis",
+            "shortDescription": "Caches care schedules per plant.",
+            "longDescription": "",
+            "weight": 30,
+            "status": "proposed"
+          }
+        ],
+        "edges": []
+      },
+      {
+        "id": "grp:libraries",
+        "label": "Shared libraries",
+        "kind": "group",
+        "path": "code",
+        "shortDescription": "Code and contracts shared between repos.",
+        "longDescription": "",
+        "weight": 16,
+        "children": [
+          {
+            "children": [],
+            "edges": [],
+            "id": "lib:contracts",
+            "label": "contracts",
+            "kind": "library",
+            "path": "bramble/contracts",
+            "shortDescription": "Shared types and the event schemas every service validates against.",
+            "longDescription": "",
+            "weight": 16
+          }
+        ],
+        "edges": []
+      },
+      {
+        "id": "grp:repos",
+        "label": "Other repos",
+        "kind": "group",
+        "path": "repos",
+        "shortDescription": "Repos with no service of their own: infrastructure, apps, tooling.",
+        "longDescription": "",
+        "weight": 14,
+        "children": [
+          {
+            "children": [],
+            "edges": [],
+            "id": "repo:bramble-infra",
+            "label": "infra",
+            "kind": "repo",
+            "path": "infrastructure",
+            "shortDescription": "Terraform for the cloud account, queues and databases.",
+            "longDescription": "Runs as: applied from CI on merge.",
+            "weight": 14
+          }
+        ],
+        "edges": []
+      },
+      {
+        "id": "pkg:external",
+        "label": "External systems",
+        "kind": "group",
+        "path": "outside the system",
+        "shortDescription": "Third-party systems the services call or hear from.",
+        "longDescription": "",
+        "weight": 90,
+        "children": [
+          {
+            "children": [],
+            "edges": [],
+            "id": "ext:stripe",
+            "label": "Stripe",
+            "kind": "external",
+            "path": "external system",
+            "shortDescription": "Card payments.",
+            "longDescription": "",
+            "weight": 18
+          },
+          {
+            "children": [],
+            "edges": [],
+            "id": "ext:postmark",
+            "label": "Postmark",
+            "kind": "external",
+            "path": "external system",
+            "shortDescription": "Transactional email.",
+            "longDescription": "",
+            "weight": 18
+          },
+          {
+            "children": [],
+            "edges": [],
+            "id": "ext:mapbox",
+            "label": "Mapbox",
+            "kind": "external",
+            "path": "external system",
+            "shortDescription": "Maps, routing and travel-time estimates.",
+            "longDescription": "",
+            "weight": 18
+          },
+          {
+            "children": [],
+            "edges": [],
+            "id": "ext:twilio",
+            "label": "Twilio",
+            "kind": "external",
+            "path": "external system",
+            "shortDescription": "SMS to customers.",
+            "longDescription": "",
+            "weight": 18,
+            "status": "planned"
+          },
+          {
+            "children": [],
+            "edges": [],
+            "id": "ext:plant-db",
+            "label": "Plant database",
+            "kind": "external",
+            "path": "external system",
+            "shortDescription": "A third-party plant-care data API.",
+            "longDescription": "Vendor not chosen yet.",
+            "weight": 18,
+            "status": "proposed",
+            "confidence": "low"
+          }
+        ],
+        "edges": [],
+        "external": true
+      }
+    ],
+    "edges": [],
+    "statusNote": "built, with courier tracking and plant-care subscriptions in progress",
+    "relations": [
+      {
+        "id": "r0",
+        "from": "svc:storefront",
+        "to": "svc:orders-api",
+        "kind": "http",
+        "label": "places orders and reads their status",
+        "count": 1,
+        "details": [
+          "places orders and reads their status"
+        ],
+        "evidence": [
+          [
+            "manifest.yaml",
+            46,
+            "places orders and reads their status"
+          ]
+        ]
+      },
+      {
+        "id": "r1",
+        "from": "svc:storefront",
+        "to": "ext:stripe",
+        "kind": "external",
+        "label": "confirms card payments",
+        "count": 1,
+        "details": [
+          "confirms card payments"
+        ],
+        "evidence": [
+          [
+            "manifest.yaml",
+            47,
+            "confirms card payments"
+          ]
+        ]
+      },
+      {
+        "id": "r2",
+        "from": "svc:mobile-app",
+        "to": "svc:orders-api",
+        "kind": "http",
+        "label": "places orders",
+        "count": 1,
+        "details": [
+          "places orders"
+        ],
+        "evidence": [
+          [
+            "manifest.yaml",
+            58,
+            "places orders"
+          ]
+        ]
+      },
+      {
+        "id": "r3",
+        "from": "svc:mobile-app",
+        "to": "svc:dispatch",
+        "kind": "http",
+        "label": "streams courier position",
+        "count": 1,
+        "details": [
+          "streams courier position"
+        ],
+        "evidence": [
+          [
+            "manifest.yaml",
+            59,
+            "streams courier position"
+          ]
+        ],
+        "status": "branch"
+      },
+      {
+        "id": "r4",
+        "from": "svc:orders-api",
+        "to": "ds:order-events",
+        "kind": "queue",
+        "label": "publishes order.paid",
+        "count": 1,
+        "details": [
+          "publishes order.paid"
+        ],
+        "evidence": [
+          [
+            "manifest.yaml",
+            73,
+            "publishes order.paid"
+          ]
+        ]
+      },
+      {
+        "id": "r5",
+        "from": "svc:orders-worker",
+        "to": "ds:order-events",
+        "kind": "queue",
+        "label": "consumes order.paid",
+        "count": 1,
+        "details": [
+          "consumes order.paid"
+        ],
+        "evidence": [
+          [
+            "manifest.yaml",
+            82,
+            "consumes order.paid"
+          ]
+        ]
+      },
+      {
+        "id": "r6",
+        "from": "svc:orders-worker",
+        "to": "ext:postmark",
+        "kind": "external",
+        "label": "sends receipts",
+        "count": 1,
+        "details": [
+          "sends receipts"
+        ],
+        "evidence": [
+          [
+            "manifest.yaml",
+            83,
+            "sends receipts"
+          ]
+        ]
+      },
+      {
+        "id": "r7",
+        "from": "svc:dispatch",
+        "to": "ds:order-events",
+        "kind": "queue",
+        "label": "consumes order.paid",
+        "count": 1,
+        "details": [
+          "consumes order.paid"
+        ],
+        "evidence": [
+          [
+            "manifest.yaml",
+            95,
+            "consumes order.paid"
+          ]
+        ]
+      },
+      {
+        "id": "r8",
+        "from": "svc:dispatch",
+        "to": "svc:orders-api",
+        "kind": "http",
+        "label": "marks orders delivered",
+        "count": 1,
+        "details": [
+          "marks orders delivered"
+        ],
+        "evidence": [
+          [
+            "manifest.yaml",
+            96,
+            "marks orders delivered"
+          ]
+        ]
+      },
+      {
+        "id": "r9",
+        "from": "svc:dispatch",
+        "to": "ext:mapbox",
+        "kind": "external",
+        "label": "routes and travel times",
+        "count": 1,
+        "details": [
+          "routes and travel times"
+        ],
+        "evidence": [
+          [
+            "manifest.yaml",
+            97,
+            "routes and travel times"
+          ]
+        ]
+      },
+      {
+        "id": "r10",
+        "from": "svc:dispatch",
+        "to": "ext:twilio",
+        "kind": "external",
+        "label": "texts the customer when the courier is close",
+        "count": 1,
+        "details": [
+          "texts the customer when the courier is close"
+        ],
+        "evidence": [
+          [
+            "manifest.yaml",
+            98,
+            "texts the customer when the courier is close"
+          ]
+        ],
+        "status": "planned"
+      },
+      {
+        "id": "r11",
+        "from": "svc:care",
+        "to": "ds:order-events",
+        "kind": "queue",
+        "label": "consumes order.delivered",
+        "count": 1,
+        "details": [
+          "consumes order.delivered"
+        ],
+        "evidence": [
+          [
+            "manifest.yaml",
+            107,
+            "consumes order.delivered"
+          ]
+        ],
+        "status": "branch"
+      },
+      {
+        "id": "r12",
+        "from": "svc:care",
+        "to": "ext:postmark",
+        "kind": "external",
+        "label": "sends reminder emails",
+        "count": 1,
+        "details": [
+          "sends reminder emails"
+        ],
+        "evidence": [
+          [
+            "manifest.yaml",
+            108,
+            "sends reminder emails"
+          ]
+        ],
+        "status": "branch"
+      },
+      {
+        "id": "r13",
+        "from": "svc:care",
+        "to": "ext:plant-db",
+        "kind": "external",
+        "label": "looks up care schedules",
+        "count": 1,
+        "details": [
+          "looks up care schedules"
+        ],
+        "evidence": [
+          [
+            "manifest.yaml",
+            109,
+            "looks up care schedules"
+          ]
+        ],
+        "status": "proposed",
+        "confidence": "low"
+      },
+      {
+        "id": "r14",
+        "from": "svc:orders-api",
+        "to": "ds:orders-db",
+        "kind": "db",
+        "label": "writes",
+        "count": 1,
+        "details": [
+          "writes"
+        ],
+        "evidence": [
+          [
+            "manifest.yaml",
+            117,
+            "Orders API write Orders DB"
+          ]
+        ]
+      },
+      {
+        "id": "r15",
+        "from": "svc:orders-worker",
+        "to": "ds:orders-db",
+        "kind": "db",
+        "label": "reads",
+        "count": 1,
+        "details": [
+          "reads"
+        ],
+        "evidence": [
+          [
+            "manifest.yaml",
+            118,
+            "Orders worker read Orders DB"
+          ]
+        ]
+      },
+      {
+        "id": "r16",
+        "from": "svc:dispatch",
+        "to": "ds:dispatch-db",
+        "kind": "db",
+        "label": "writes",
+        "count": 1,
+        "details": [
+          "writes"
+        ],
+        "evidence": [
+          [
+            "manifest.yaml",
+            124,
+            "Dispatch write Dispatch DB"
+          ]
+        ]
+      },
+      {
+        "id": "r17",
+        "from": "svc:care",
+        "to": "ds:care-cache",
+        "kind": "db",
+        "label": "reads",
+        "count": 1,
+        "details": [
+          "reads"
+        ],
+        "evidence": [
+          [
+            "manifest.yaml",
+            135,
+            "Plant care read Care cache"
+          ]
+        ],
+        "status": "proposed",
+        "confidence": "low"
+      },
+      {
+        "id": "r18",
+        "from": "svc:orders-api",
+        "to": "ext:stripe",
+        "kind": "external",
+        "label": "uses Stripe",
+        "count": 1,
+        "details": [
+          "uses Stripe"
+        ],
+        "evidence": [
+          [
+            "manifest.yaml",
+            141,
+            "Orders API uses Stripe"
+          ]
+        ]
+      },
+      {
+        "id": "r19",
+        "from": "svc:storefront",
+        "to": "lib:contracts",
+        "kind": "import",
+        "label": "uses contracts",
+        "count": 1,
+        "details": [
+          "uses contracts"
+        ],
+        "evidence": [
+          [
+            "manifest.yaml",
+            162,
+            "Storefront uses contracts"
+          ]
+        ]
+      },
+      {
+        "id": "r20",
+        "from": "svc:mobile-app",
+        "to": "lib:contracts",
+        "kind": "import",
+        "label": "uses contracts",
+        "count": 1,
+        "details": [
+          "uses contracts"
+        ],
+        "evidence": [
+          [
+            "manifest.yaml",
+            162,
+            "Mobile app uses contracts"
+          ]
+        ]
+      },
+      {
+        "id": "r21",
+        "from": "svc:orders-api",
+        "to": "lib:contracts",
+        "kind": "import",
+        "label": "uses contracts",
+        "count": 1,
+        "details": [
+          "uses contracts"
+        ],
+        "evidence": [
+          [
+            "manifest.yaml",
+            162,
+            "Orders API uses contracts"
+          ]
+        ]
+      },
+      {
+        "id": "r22",
+        "from": "svc:orders-worker",
+        "to": "lib:contracts",
+        "kind": "import",
+        "label": "uses contracts",
+        "count": 1,
+        "details": [
+          "uses contracts"
+        ],
+        "evidence": [
+          [
+            "manifest.yaml",
+            162,
+            "Orders worker uses contracts"
+          ]
+        ]
+      },
+      {
+        "id": "r23",
+        "from": "svc:dispatch",
+        "to": "lib:contracts",
+        "kind": "import",
+        "label": "uses contracts",
+        "count": 1,
+        "details": [
+          "uses contracts"
+        ],
+        "evidence": [
+          [
+            "manifest.yaml",
+            162,
+            "Dispatch uses contracts"
+          ]
+        ]
+      },
+      {
+        "id": "r24",
+        "from": "svc:care",
+        "to": "lib:contracts",
+        "kind": "import",
+        "label": "uses contracts",
+        "count": 1,
+        "details": [
+          "uses contracts"
+        ],
+        "evidence": [
+          [
+            "manifest.yaml",
+            162,
+            "Plant care uses contracts"
+          ]
+        ],
+        "status": "branch"
+      }
+    ],
+    "rollups": {},
+    "flows": [
+      {
+        "id": "place-order",
+        "title": "Place an order",
+        "summary": "A customer buys a plant on the web and gets a receipt.",
+        "status": "",
+        "footnote": "",
+        "steps": [
+          {
+            "from": "svc:storefront",
+            "to": "svc:orders-api",
+            "kind": "http",
+            "text": "POST /orders with the cart",
+            "detected": true,
+            "tags": []
+          },
+          {
+            "from": "svc:storefront",
+            "to": "ext:stripe",
+            "kind": "external",
+            "text": "confirms the card payment",
+            "detected": true,
+            "tags": []
+          },
+          {
+            "from": "ext:stripe",
+            "to": "svc:orders-api",
+            "kind": "webhook",
+            "text": "payment_intent.succeeded",
+            "detected": true,
+            "tags": []
+          },
+          {
+            "from": "svc:orders-api",
+            "to": "ds:order-events",
+            "kind": "queue",
+            "text": "publishes order.paid",
+            "detected": true,
+            "tags": []
+          },
+          {
+            "from": "ds:order-events",
+            "to": "svc:orders-worker",
+            "kind": "queue",
+            "text": "receipt job picks it up",
+            "detected": true,
+            "tags": []
+          },
+          {
+            "from": "svc:orders-worker",
+            "to": "ext:postmark",
+            "kind": "external",
+            "text": "emails the receipt",
+            "detected": true,
+            "tags": []
+          }
+        ]
+      },
+      {
+        "id": "deliver",
+        "title": "Deliver an order",
+        "summary": "Dispatch hands a paid order to a courier and the customer watches it arrive.",
+        "status": "tracking is on a branch",
+        "footnote": "",
+        "steps": [
+          {
+            "from": "ds:order-events",
+            "to": "svc:dispatch",
+            "kind": "queue",
+            "text": "dispatch hears order.paid",
+            "detected": true,
+            "tags": []
+          },
+          {
+            "from": "svc:dispatch",
+            "to": "ext:mapbox",
+            "kind": "external",
+            "text": "picks the nearest courier",
+            "detected": true,
+            "tags": []
+          },
+          {
+            "from": "svc:dispatch",
+            "to": "svc:mobile-app",
+            "kind": "http",
+            "text": "streams courier position",
+            "detected": true,
+            "tags": [
+              "branch"
+            ]
+          },
+          {
+            "from": "svc:dispatch",
+            "to": "ext:twilio",
+            "kind": "external",
+            "text": "texts \"arriving in 5 minutes\"",
+            "detected": true,
+            "tags": [
+              "planned"
+            ]
+          },
+          {
+            "from": "svc:dispatch",
+            "to": "svc:orders-api",
+            "kind": "http",
+            "text": "marks the order delivered",
+            "detected": true,
+            "tags": []
+          }
+        ]
+      },
+      {
+        "id": "care-reminders",
+        "title": "Care reminders",
+        "summary": "After delivery, the customer gets reminders to water and repot.",
+        "status": "proposed",
+        "footnote": "Steps tagged inferred are not stated directly by a source.",
+        "steps": [
+          {
+            "from": "ds:order-events",
+            "to": "svc:care",
+            "kind": "queue",
+            "text": "care hears order.delivered",
+            "detected": true,
+            "tags": [
+              "branch"
+            ]
+          },
+          {
+            "from": "svc:care",
+            "to": "ext:plant-db",
+            "kind": "external",
+            "text": "looks up the plant's schedule",
+            "detected": true,
+            "tags": [
+              "proposed",
+              "inferred"
+            ]
+          },
+          {
+            "from": "svc:care",
+            "to": "ext:postmark",
+            "kind": "external",
+            "text": "sends the reminder email",
+            "detected": true,
+            "tags": [
+              "branch"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
