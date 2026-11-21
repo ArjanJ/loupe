@@ -152,7 +152,7 @@ try {
   const bad = fixture('bad');
   const BAD = 'sk-bad-0123456789abcdef';
   r = await run(['map', bad, '--no-open'], childEnv({ ANTHROPIC_API_KEY: BAD, ANTHROPIC_BASE_URL: BASE }));
-  check(r.code !== 0 && r.all.includes('HTTP 401') && r.all.includes('***') && !r.all.includes(BAD), 'bad key: HTTP 401 shown, key redacted', r.all);
+  check(r.code !== 0 && r.all.includes('HTTP 401') && r.all.includes('***') && !r.all.includes(BAD) && /scanning failed \(exit 1\)/.test(r.err), 'bad key: HTTP 401 shown, key redacted, keeps scanning failed line', r.all);
 
   // claude: the fake CLI on PATH wins over API keys
   const cl = fixture('claude');
@@ -488,19 +488,134 @@ try {
     g('init', '-q'); g('add', '-A'); g('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'init');
     const cBefore = seen.count;
     r = await run(['map', emptyRepo, '--no-open', '--backend', 'openai'], stEnv);
-    check(r.code === 2 && /no supported source files/i.test(r.err) && seen.count === cBefore, 'languages: repo with no source files exits 2 before any model call', r.all);
+    check(r.code === 2 && /no supported source files/i.test(r.err) && !/scanning failed/.test(r.err) && seen.count === cBefore, 'languages: repo with no source files exits 2 without duplicate scanning-failed line', r.all);
 
-    // Multi-language (Python + Go + Rust, no package.json)
+    // Multi-language (Python + Go + Rust + C/C++ + Objective-C, no package.json)
     const poly = join(TMP, 'polyglot-app'); mkdirSync(join(poly, 'src'), { recursive: true });
     writeFileSync(join(poly, 'src', 'signer.py'), 'class Signer:\n    pass\n\ndef sign_bytes(data):\n    return data\n');
     writeFileSync(join(poly, 'src', 'server.go'), 'package main\n\ntype Config struct{}\n\nfunc StartServer() {}\n');
     writeFileSync(join(poly, 'src', 'lib.rs'), 'pub struct Token;\npub fn verify() -> bool { true }\n');
+    for (const ext of ['cc', 'cxx', 'hh', 'hxx', 'c++', 'h++', 'm', 'mm']) {
+      writeFileSync(join(poly, 'src', `native.${ext}`), `int fn_${ext.replace(/\+/g, 'p')}(void) { return 0; }\n`);
+    }
     const gp = (...a) => execFileSync(gitBin, a, { cwd: poly, stdio: 'pipe' });
     gp('init', '-q'); gp('add', '-A'); gp('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'init');
     r = await run(['map', poly, '--no-open', '--backend', 'openai'], stEnv);
     const polyTree = existsSync(join(poly, '.loupe', 'tree.json')) ? JSON.parse(readFileSync(join(poly, '.loupe', 'tree.json'), 'utf8')) : null;
+    const polyFiles = existsSync(join(poly, '.loupe', 'tree.files.json')) ? JSON.parse(readFileSync(join(poly, '.loupe', 'tree.files.json'), 'utf8')) : {};
     const polyText = JSON.stringify(polyTree);
-    check(r.code === 0 && polyTree?.root?.children?.[0]?.packageName === 'polyglot-app' && polyText.includes('class Signer') && polyText.includes('StartServer()') && polyText.includes('struct Token'), 'languages: multi-language repo without package.json maps Python/Go/Rust + extracts exports', polyText.slice(0, 1500));
+    const cppObjcOk = ['cc', 'cxx', 'hh', 'hxx', 'c++', 'h++', 'm', 'mm'].every((ext) => Object.hasOwn(polyFiles, `src/native.${ext}`));
+    check(r.code === 0 && polyTree?.root?.children?.[0]?.packageName === 'polyglot-app' && polyText.includes('class Signer') && polyText.includes('StartServer()') && polyText.includes('struct Token') && cppObjcOk, 'languages: multi-language repo maps Python/Go/Rust/C++/Objective-C + extracts exports', polyText.slice(0, 1500));
+  }
+
+  // ---------- skip vendored, build, generated, gitignored, .gitattributes & minified files (with re-include) ----------
+  {
+    const vend = join(TMP, 'vendored-repo');
+    const write = (rel, content) => {
+      const full = join(vend, rel);
+      mkdirSync(dirname(full), { recursive: true });
+      writeFileSync(full, content);
+    };
+    // Real source files that must be mapped
+    write('cmd/main.go', 'package main\nfunc Main() {}\n');
+    write('internal/app/app.go', 'package app\nfunc Run() {}\n');
+    write('other/gen/handwritten.go', 'package gen\nfunc Handwritten() {}\n'); // gen/ without *.pb.* is kept
+    // Default excluded directories
+    write('vendor/github.com/foo/bar/f1.go', 'package bar\nfunc F1() {}\n');
+    write('vendors/lib/v.js', 'export const v = 1;\n');
+    write('third_party/lib/f1.c', 'int f1(void){return 0;}\n');
+    write('third-party/lib/f2.h', 'int f2(void);\n');
+    write('Pods/AFNetworking/f1.swift', 'func pod() {}\n');
+    write('Carthage/Checkouts/x.swift', 'func carthage() {}\n');
+    write('bower_components/pkg/a.js', 'export const a = 1;\n');
+    write('node_modules/pkg/index.js', 'export const n = 1;\n');
+    write('build/gen/x1_pb2.py', 'def x(): pass\n');
+    write('out/app.js', 'export const o = 1;\n');
+    write('target/debug/x1.rs', 'pub fn x() {}\n');
+    write('dist/index.js', 'export const d = 1;\n');
+    write('.next/server.js', 'export const nx = 1;\n');
+    write('.nuxt/app.js', 'export const nu = 1;\n');
+    write('.svelte-kit/out.js', 'export const sk = 1;\n');
+    write('coverage/report.js', 'export const cv = 1;\n');
+    write('generated/types.ts', 'export type T = string;\n');
+    write('__generated__/gql.ts', 'export const q = 1;\n');
+    write('gen/proto/x1.pb.go', 'package proto\nfunc X1() {}\n');
+    write('gen/proto/helper.go', 'package proto\nfunc Helper() {}\n'); // inside gen/ holding *.pb.*
+    write('test-d/types.ts', 'export const t = 1;\n');
+    // Default excluded files
+    write('public/js/app.min.js', 'export const m = 1;\n');
+    write('public/js/app.bundle.js', 'export const b = 1;\n');
+    write('api/svc.pb.go', 'package api\nfunc S() {}\n');
+    write('api/svc.pb.gw.go', 'package api\nfunc G() {}\n');
+    write('py/msg_pb2.py', 'def m(): pass\n');
+    write('py/msg_pb2_grpc.py', 'def g(): pass\n');
+    write('src/schema.generated.ts', 'export const s = 1;\n');
+    write('src/Form.designer.cs', 'class Form {}\n');
+    write('docs/conf.py', 'project = "x"\n');
+    // Minified files (not matching *.min.js)
+    write('src/avg_long.js', 'var a=function(b){return b+1};'.repeat(30) + '\n'); // > 500 avg line len
+    write('src/huge_line.js', 'const a = 1;\n'.repeat(20) + 'const big = "' + 'x'.repeat(5100) + '";\n'); // > 5000 single line
+    // Force-added .gitignored file
+    write('.gitignore', 'ignored_dir/\n');
+    write('ignored_dir/tracked_ignored.js', 'export const ign = 1;\n');
+    // .gitattributes exclusions and re-includes
+    write('src/attr_gen.ts', 'export const ag = 1;\n');
+    write('src/attr_vend.ts', 'export const av = 1;\n');
+    write('src/attr_nodiff.ts', 'export const an = 1;\n');
+    write('src/attr_bin.ts', 'export const ab = 1;\n');
+    write('vendor/keep_me.go', 'package keep\nfunc Keep() {}\n');
+    write('src/keep_me.generated.ts', 'export const keptGen = 1;\n');
+    write('src/keep_minified.js', 'var k=function(x){return x+1};'.repeat(30) + '\n');
+    write('.gitattributes', [
+      'src/attr_gen.ts linguist-generated=true',
+      'src/attr_vend.ts linguist-vendored',
+      'src/attr_nodiff.ts -diff',
+      'src/attr_bin.ts binary',
+      'vendor/keep_me.go linguist-vendored=false',
+      'src/keep_me.generated.ts linguist-generated=false',
+      'src/keep_minified.js linguist-generated=false',
+    ].join('\n') + '\n');
+
+    const gv = (...a) => execFileSync(gitBin, a, { cwd: vend, stdio: 'pipe' });
+    gv('init', '-q');
+    gv('add', '-A');
+    gv('add', '-f', 'ignored_dir/tracked_ignored.js');
+    gv('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'init');
+
+    r = await run(['map', vend, '--no-open', '--backend', 'openai'], stEnv);
+    const vendFiles = existsSync(join(vend, '.loupe', 'tree.files.json')) ? Object.keys(JSON.parse(readFileSync(join(vend, '.loupe', 'tree.files.json'), 'utf8'))).sort() : [];
+    const expectedKept = ['cmd/main.go', 'internal/app/app.go', 'other/gen/handwritten.go', 'src/keep_me.generated.ts', 'src/keep_minified.js', 'vendor/keep_me.go'];
+    check(r.code === 0 && JSON.stringify(vendFiles) === JSON.stringify(expectedKept), 'scan quality: excludes vendored/build/generated/ignored/minified/gitattributes files and honours re-include', JSON.stringify({ vendFiles, expectedKept }) + '\n' + r.all);
+    check(/skipped \d+ vendored\/generated files \(see \.gitattributes to include\)/.test(r.err), 'scan quality: logs skipped vendored/generated count without --verbose', r.err);
+  }
+
+  // ---------- JS/TS private class fields are not treated as # comments ----------
+  {
+    const priv = join(TMP, 'private-fields');
+    mkdirSync(join(priv, 'src'), { recursive: true });
+    mkdirSync(join(priv, 'prisma'), { recursive: true });
+    writeFileSync(join(priv, 'package.json'), JSON.stringify({ name: 'priv', version: '1.0.0', type: 'module' }));
+    writeFileSync(join(priv, 'prisma', 'schema.prisma'), 'model Invoice {\n  id Int @id\n}\n');
+    writeFileSync(join(priv, 'src', 'pay.ts'), [
+      `import Stripe from 'stripe';`,
+      `export class Payments {`,
+      `  #stripe = new Stripe(process.env.STRIPE_KEY!);`,
+      `  #slack = fetch('https://hooks.slack.com/services/T0/B0/XYZ', { method: 'POST' });`,
+      `  #db = new PrismaClient();`,
+      `  list() { return this.#db.invoice.findMany(); }`,
+      `}`,
+    ].join('\n') + '\n');
+    writeFileSync(join(priv, 'src', 'index.ts'), `import { Payments } from './pay';\nexport const p = new Payments();\n`);
+    writeFileSync(join(priv, 'src', 'notes.py'), `# https://api.github.com/repos/org/app\ndef noop():\n    return None\n`);
+    const gp = (...a) => execFileSync(gitBin, a, { cwd: priv, stdio: 'pipe' });
+    gp('init', '-q'); gp('add', '-A'); gp('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'init');
+    r = await run(['map', priv, '--no-open', '--backend', 'openai'], stEnv);
+    const privTree = existsSync(join(priv, '.loupe', 'tree.json')) ? JSON.parse(readFileSync(join(priv, '.loupe', 'tree.json'), 'utf8')) : null;
+    const rels = privTree?.root?.relations || [];
+    const hasSlack = rels.some((x) => x.kind === 'external' && x.to === 'ext:slack');
+    const hasDb = rels.some((x) => x.kind === 'db' && x.to === 'file:prisma/schema.prisma');
+    const hasPyCommentGithub = rels.some((x) => x.to === 'ext:github');
+    check(r.code === 0 && hasSlack && hasDb && !hasPyCommentGithub, 'relations: JS/TS private fields (#slack, #db) detected while # stays a comment in Python', JSON.stringify(rels));
   }
 } finally {
   server.close();

@@ -107,6 +107,7 @@ const env = { ...process.env, LOUPE_BACKEND: backend.name, LOUPE_CACHE: CACHE, .
 const step = (n, label, script, args, stdout = 'inherit') => {
   console.log(`[${n}/3] ${label} …`);
   const r = spawnSync(process.execPath, [join(here, script), ...args], { stdio: ['ignore', stdout, 'inherit'], env });
+  if (r.status === 2) process.exit(2); // step already printed a friendly user-facing error
   if (r.status !== 0) fail(`${label.split(' ')[0]} failed${r.status != null ? ` (exit ${r.status})` : ''}; rerun with --verbose for details`, r.status || 1);
 };
 

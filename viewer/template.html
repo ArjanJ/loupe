@@ -343,13 +343,20 @@ const DATA = /*__ZOOM_TREE__*/null;
   const tops = DATA.root.children;
   let ti = 0;
   tops.forEach((t) => { t.tintIndex = t.external === true ? -2 : ti++; });
+  const KIND_NOUNS = {
+    package: ['package', 'packages'], module: ['module', 'modules'], file: ['file', 'files'],
+    external: ['service', 'services'], service: ['service', 'services'], datastore: ['datastore', 'datastores'],
+    library: ['library', 'libraries'], repo: ['repo', 'repos'], endpoint: ['interface', 'interfaces'],
+  };
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
   for (const n of nodes) {
     let a = n; while (a.parent && a.parent !== DATA.root) a = a.parent;
     n.tintIndex = n === DATA.root ? -1 : a.tintIndex;
     n.radius = [22, 20, 16, 14][Math.min(n.depth, 3)];
     const kids = n.children.filter((c) => !c.quiet).length + n.children.filter((c) => c.quiet).reduce((s, c) => s + (parseInt(String(c.label).replace(/\D+/g, ''), 10) || 0), 0);
     const childKind = n.children[0]?.kind;
-    n.meta = n.children.length ? `${kids} ${({ package: 'packages', module: 'modules', file: 'files', external: 'services', service: 'services', datastore: 'datastores', library: 'libraries', repo: 'repos', endpoint: 'interfaces' })[childKind] || 'items'}` : '';
+    const [one, many] = KIND_NOUNS[childKind] || ['item', 'items'];
+    n.meta = n.children.length ? plural(kids, one, many) : '';
   }
   const tintOf = (n) => (n.tintIndex === -2 ? T.extTint : n.tintIndex < 0 ? T.rootTile : T.tints[n.tintIndex % T.tints.length]);
   // lifecycle + certainty (system manifests): built | branch | proposed | planned, confidence: low = inferred
@@ -1893,7 +1900,7 @@ const DATA = /*__ZOOM_TREE__*/null;
       for (const f of FLOWS) {
         const b = el('button', 'row'); b.type = 'button';
         const body = el('div', 'rb'); const top = el('div', 'rt');
-        top.appendChild(el('span', 't', f.title)); top.appendChild(el('span', 'cnt', `${f.steps.length} steps`));
+        top.appendChild(el('span', 't', f.title)); top.appendChild(el('span', 'cnt', plural(f.steps.length, 'step', 'steps')));
         body.appendChild(top); body.appendChild(el('div', 'd', f.summary));
         b.appendChild(body);
         if (f === activeFlow) b.classList.add('cur');

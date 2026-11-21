@@ -252,6 +252,26 @@ results.skewedClockFly = await (async () => {
     return { ok: false, error: String(e && e.message || e) };
   }
 })();
+// 10. child-count pluralisation (singular for 1, plural for > 1)
+results.pluralisation = await (async () => {
+  const pg = await open(SCHEME);
+  const res = await pg.evaluate(() => {
+    const singles = [], bad = [];
+    for (const n of window.__sz.nodes) {
+      if (!n.children.length) continue;
+      const kids = n.children.filter((c) => !c.quiet).length + n.children.filter((c) => c.quiet).reduce((s, c) => s + (parseInt(String(c.label).replace(/\D+/g, ''), 10) || 0), 0);
+      if (kids === 1) {
+        singles.push(n.meta);
+        if (!/^1 (package|module|file|service|datastore|library|repo|interface|item)$/.test(n.meta)) bad.push({ id: n.id, meta: n.meta });
+      } else if (kids > 1) {
+        if (!/^\d+ (packages|modules|files|services|datastores|libraries|repos|interfaces|items)$/.test(n.meta)) bad.push({ id: n.id, meta: n.meta });
+      }
+    }
+    return { ok: bad.length === 0, singleCount: singles.length, sampleSingles: singles.slice(0, 5), bad };
+  });
+  await pg.close();
+  return res;
+})();
 results.consoleErrors = errors;
 console.log(JSON.stringify(results, null, 2));
 // exit non-zero on any explicit failure: an `ok: false`, a text violation, or a console error

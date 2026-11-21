@@ -33,7 +33,7 @@ You can also download [`demo/excalidraw/excalidraw.html`](demo/excalidraw/excali
 - **Runtime:** Node 18+ and `git` (run inside a git repository with at least one commit).
 - **Model:** one of [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`claude` on your `PATH`), `ANTHROPIC_API_KEY`, or `OPENAI_API_KEY`. Loupe sends source excerpts and file paths to the model you choose.
 - **Cost & caching:** model usage scales with repository size (small repos take seconds; a ~500-file monorepo takes longer on the first run). Answers are cached in `.loupe/cache/` keyed by prompt and code content, so reruns only pay for what changed.
-- **Supported languages:** TypeScript, JavaScript, Python, Go, Rust, Ruby, Java, Kotlin, Swift, PHP, C#, C/C++, Scala, Elixir, Vue, Svelte, SQL, and Prisma. Static import/HTTP/DB/queue/external detectors currently focus on JS/TS/Prisma/SQL.
+- **Supported languages:** TypeScript, JavaScript, Python, Go, Rust, Ruby, Java, Kotlin, Swift, PHP, C#, C/C++, Objective-C, Scala, Elixir, Vue, Svelte, SQL, and Prisma. Static import/HTTP/DB/queue/external detectors currently focus on JS/TS/Prisma/SQL.
 
 ## How to read a map
 

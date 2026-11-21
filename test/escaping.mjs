@@ -30,7 +30,10 @@ const tree = {
     ],
     relations: [{ id: `r0:${EVIL}`, from: idA1, to: idB1, kind: 'http', label: EVIL, count: 2, details: [EVIL], evidence: [[`src/${EVIL}.ts`, 3, EVIL]], status: 'planned', confidence: 'low' }],
     rollups: { [`${idPkgA}|${idPkgB}`]: { label: EVIL, summary: EVIL } },
-    flows: [{ id: `f:${EVIL}`, title: EVIL, summary: EVIL, status: EVIL, footnote: EVIL, steps: [{ from: idA1, to: idB1, kind: 'http', text: EVIL, detected: true, tags: ['inferred', EVIL] }, { from: idB1, to: idA2, kind: 'queue', text: EVIL, detected: false }] }] },
+    flows: [
+      { id: `f:${EVIL}`, title: EVIL, summary: EVIL, status: EVIL, footnote: EVIL, steps: [{ from: idA1, to: idB1, kind: 'http', text: EVIL, detected: true, tags: ['inferred', EVIL] }, { from: idB1, to: idA2, kind: 'queue', text: EVIL, detected: false }] },
+      { id: 'f-one', title: 'Single step', summary: 'One hop.', steps: [{ from: idA1, to: idB1, kind: 'http', text: 'calls B', detected: true }] },
+    ] },
 };
 const dir = mkdtempSync(join(tmpdir(), 'loupe-esc-'));
 try {
@@ -54,11 +57,21 @@ try {
   await p.evaluate((id) => window.__sz.select(id), idA2); await p.waitForTimeout(300);
   await p.locator('#legendBtn').click(); await p.waitForTimeout(150);
   await p.locator('#flowsBtn').click(); await p.waitForTimeout(150);
+  const flowsPopText = await p.evaluate(() => window.__sz.popover().text);
   await p.locator('#pop .row').first().click(); await p.waitForTimeout(1200);
-  const res = await p.evaluate(() => ({ pwn: window.__pwn ?? null, scripts: document.scripts.length, imgs: document.images.length, svgs: document.querySelectorAll('svg[onload]').length, title: document.title }));
+  const res = await p.evaluate(([pkgA, pkgB]) => {
+    const byId = new Map(window.__sz.nodes.map((n) => [n.id, n]));
+    return {
+      pwn: window.__pwn ?? null, scripts: document.scripts.length, imgs: document.images.length,
+      svgs: document.querySelectorAll('svg[onload]').length, title: document.title,
+      metaRoot: byId.get('system')?.meta, metaPkgA: byId.get(pkgA)?.meta, metaPkgB: byId.get(pkgB)?.meta,
+    };
+  }, [idPkgA, idPkgB]);
   await b.close();
-  const ok = hasCsp && res.pwn === null && res.imgs === 0 && res.svgs === 0 && res.scripts === 2 && !errs.length;
-  console.log(JSON.stringify({ hasCsp, ...res, errors: errs }));
+  const pluralOk = res.metaRoot === '2 packages' && res.metaPkgA === '2 files' && res.metaPkgB === '1 file'
+    && flowsPopText.includes('2 steps') && flowsPopText.includes('1 step') && !flowsPopText.includes('1 steps');
+  const ok = hasCsp && pluralOk && res.pwn === null && res.imgs === 0 && res.svgs === 0 && res.scripts === 2 && !errs.length;
+  console.log(JSON.stringify({ hasCsp, pluralOk, ...res, errors: errs }));
   console.error(ok ? 'PASS' : 'FAIL');
   process.exitCode = ok ? 0 : 1;
 } finally { rmSync(dir, { recursive: true, force: true }); }

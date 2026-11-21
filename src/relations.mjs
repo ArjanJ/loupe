@@ -14,9 +14,9 @@
 // LOUPE_NOLLM=1 skips uncached LLM calls (static analysis only).
 import { readFileSync, existsSync, statSync, realpathSync } from 'node:fs';
 import { join, dirname, resolve, posix } from 'node:path';
-import { createLlm, hasTrackedFiles, redactSecrets } from './llm.mjs';
+import { createLlm, git, hasTrackedFiles, redactSecrets } from './llm.mjs';
 import { SafeFsError, within, checkSafePath, safeDir, safeWriteFile } from './fs-safe.mjs';
-import { SRC_EXT, SECRET_FILE } from './source.mjs';
+import { SRC_EXT, SECRET_FILE, isMinified, gitSourceFilters } from './source.mjs';
 
 if (!process.argv[2] || !process.argv[3]) { console.error('usage: loupe relations <repoDir> <tree.json>'); process.exit(2); }
 const REPO = resolve(process.argv[2]);
@@ -58,15 +58,19 @@ const ancestors = (id) => { const out = []; let cur = id; while (cur) { out.push
 const files = new Map(); // path -> { text, lines, node, pkg }
 const wsDirs = root.children.map((c) => c.path).filter((p) => p && p !== '.').sort((a, b) => b.length - a.length);
 const pkgOf = (f) => wsDirs.find((d) => f.startsWith(d + '/')) || '.';
-for (const [f, node] of Object.entries(fileMap)) {
-  if (!SRC_EXT.test(f) || SECRET_FILE.test(f) || (IGNORE && IGNORE.test(f))) continue;
+const mapEntries = Object.entries(fileMap).filter(([f]) => SRC_EXT.test(f) && !SECRET_FILE.test(f) && !(IGNORE && IGNORE.test(f)));
+const filters = gitSourceFilters(REPO, mapEntries.map(([f]) => f), git);
+for (const [f, node] of mapEntries) {
+  if (filters.isSkippedPath(f)) continue;
   const text = readRepo(f); if (!text) continue;
+  if (!filters.isIncludedByAttr(f) && isMinified(text)) continue;
   files.set(f, { path: f, text, lines: text.split('\n'), node, pkg: pkgOf(f) });
 }
 function lineIndex(fi) { if (!fi.nl) { fi.nl = []; for (let i = 0; i < fi.text.length; i++) if (fi.text.charCodeAt(i) === 10) fi.nl.push(i); } return fi.nl; }
 const lineAt = (fi, idx) => { const nl = lineIndex(fi); let lo = 0, hi = nl.length; while (lo < hi) { const m = (lo + hi) >> 1; if (nl[m] < idx) lo = m + 1; else hi = m; } return lo + 1; };
 const snippet = (f, line) => redactSecrets((files.get(f)?.lines[line - 1] || '').trim().slice(0, 2000)).slice(0, 140);
-const isCommentLine = (l) => /^\s*(\/\/|\*|\/\*|#)/.test(l);
+const HASH_COMMENT_EXT = /\.(py|rb|ex|exs|sh|bash|zsh|fish|pl|pm|r|ya?ml|toml|conf|cfg|ini|cmake|mk|tf|tfvars|nix|jl|awk|sed)$/i;
+const isCommentLine = (l, path = '') => /^\s*(\/\/|\*|\/\*|#!)/.test(l) || (HASH_COMMENT_EXT.test(path) && /^\s*#/.test(l));
 const isTest = (p) => /\.(test|spec|stories)\.|__tests__|__mocks__|test-support|\/fixtures?\//.test(p);
 
 // ---------------------------------------------------------------- relation accumulator (leaf node -> leaf node)
@@ -170,7 +174,7 @@ if (routes.length) for (const fi of files.values()) {
   if (isTest(fi.path)) continue;
   for (const m of fi.text.matchAll(/(["'`])(\/(?:[A-Za-z0-9_\-.:]|\$\{[^}`]*\}|\/)+)(?:\?[^"'`]*)?\1/g)) {
     const raw = m[2]; const line = lineAt(fi, m.index); const L = fi.lines[line - 1] || '';
-    if (isCommentLine(L) || /\b(to|href|navigate|redirect|Link|src|path)\b\s*[:=(]/.test(L) || /\.(svg|png|jpe?g|webp|gif|css|js|ico|txt|xml|json|woff2?)$/.test(raw)) continue;
+    if (isCommentLine(L, fi.path) || /\b(to|href|navigate|redirect|Link|src|path)\b\s*[:=(]/.test(L) || /\.(svg|png|jpe?g|webp|gif|css|js|ico|txt|xml|json|woff2?)$/.test(raw)) continue;
     const ctx = fi.lines.slice(Math.max(0, line - 2), line + 1).join('\n');
     if (!CALL_CTX.test(ctx)) continue;
     const lit = raw.replace(/\$\{[^}]*\}/g, ':p');
@@ -285,7 +289,7 @@ for (const fi of files.values()) {
   if (isTest(fi.path)) continue;
   for (const x of EXT) {
     const hits = [];
-    fi.lines.forEach((l, i) => { if (!isCommentLine(l) && !/^\s*(import|export)\s+type\b/.test(l) && x.re.test(l)) hits.push(i + 1); });
+    fi.lines.forEach((l, i) => { if (!isCommentLine(l, fi.path) && !/^\s*(import|export)\s+type\b/.test(l) && x.re.test(l)) hits.push(i + 1); });
     if (!hits.length) continue;
     addExt(x.id, x.label, x.desc);
     const rr = add(fi.node, `ext:${x.id}`, x.kind || 'external', x.kind === 'db' ? `uses ${x.label}` : `calls ${x.label}`, [fi.path, hits[0]], hits.length);
