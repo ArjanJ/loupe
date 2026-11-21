@@ -6,20 +6,15 @@
 //         3) LLM writes short/long descriptions for key files, per module
 //         4) LLM writes the system-level summary; assemble tree with sibling edges at every level
 // LLM answers are cached next to the output in .loupe-cache/ (LOUPE_CACHE), keyed by prompt hash, so reruns are cheap.
-// The LLM is your local Claude Code CLI (LOUPE_CLAUDE_BIN, default `claude`); it is run with no tools, prompt on stdin.
+// The LLM is your local Claude Code CLI, the Anthropic API or the OpenAI API: see src/llm.mjs (LOUPE_BACKEND).
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, realpathSync } from 'node:fs';
 import { join, dirname, relative, resolve, posix, isAbsolute } from 'node:path';
-import { execFileSync, spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createLlm, BackendError, git } from './llm.mjs';
 
 if (!process.argv[2]) { console.error('usage: loupe scan <repoDir> [out.json]'); process.exit(2); }
 const REPO = resolve(process.argv[2]);
 const OUT = resolve(process.argv[3] || 'loupe-tree.json');
 const CACHE = resolve(process.env.LOUPE_CACHE || join(dirname(OUT), '.loupe-cache'));
-const CLAUDE = process.env.LOUPE_CLAUDE_BIN || 'claude';
-const MODEL = process.env.LOUPE_MODEL || ''; // empty: the CLI's default model
-const EFFORT = process.env.LOUPE_EFFORT || '';
-const CONCURRENCY = Math.max(1, Number(process.env.LOUPE_CONCURRENCY) || 6);
 const KEY_FILES_PER_MODULE = Math.max(1, Number(process.env.LOUPE_KEY_FILES) || 12);
 // LOUPE_IGNORE: a regex of workspace dirs or files to leave out (e.g. "^examples/")
 const IGNORE = process.env.LOUPE_IGNORE ? new RegExp(process.env.LOUPE_IGNORE) : null;
@@ -36,8 +31,8 @@ const readRepo = (p) => (isRegularFile(p) ? readFileSync(join(REPO, p), 'utf8') 
 const readJson = (p) => { const t = readRepo(p); if (!t) return null; try { return JSON.parse(t); } catch { log(`skipping ${p}: invalid JSON`); return null; } };
 
 // ---------- 1. structure ----------
-const gitFiles = execFileSync('git', ['ls-files'], { cwd: REPO, encoding: 'utf8' }).split('\n').filter(Boolean);
-const commit = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: REPO, encoding: 'utf8' }).trim();
+const gitFiles = git(REPO, ['ls-files'], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 }).split('\n').filter(Boolean);
+const commit = git(REPO, ['rev-parse', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
 const rootPkg = readJson('package.json') || {};
 // "@acme/shop-monorepo" -> "shop": scope and workspace-ish suffixes say nothing on a map
 const ROOT_NAME = (typeof rootPkg.name === 'string' && rootPkg.name ? rootPkg.name : posix.basename(REPO)).replace(/^@[^/]+\//, '').replace(/[-_ ](monorepo|workspace|workspaces|root)$/i, '') || posix.basename(REPO);
@@ -70,7 +65,7 @@ if (!packages.length) packages.push({ dir: '.', name: ROOT_NAME });
 log('packages:', packages.map((p) => p.name).join(', '));
 
 const SRC_EXT = /\.(ts|tsx|mts|cts|js|mjs|cjs|jsx|sql|prisma)$/;
-const EXCLUDE = /(\.test\.|\.spec\.|__tests__|\/tests?\/|test-support|\.d\.m?ts$|\/dist\/|node_modules|\/migrations\/|fixtures?\/)/;
+const EXCLUDE = /(\.test\.|\.spec\.|(^|\/)__tests__\/|(^|\/)tests?\/|test-support|\.d\.m?ts$|(^|\/)dist\/|node_modules|(^|\/)migrations\/|(^|\/)fixtures?\/)/;
 const isSource = (f) => SRC_EXT.test(f) && !EXCLUDE.test(f) && !(IGNORE && IGNORE.test(f)) && isRegularFile(f);
 
 const files = new Map(); // path -> info
@@ -124,39 +119,7 @@ for (const info of files.values()) {
 }
 
 // ---------- LLM helper ----------
-let running = 0; const queue = [];
-function limit(fn) { return new Promise((res, rej) => { queue.push({ fn, res, rej }); pump(); }); }
-function pump() { while (running < CONCURRENCY && queue.length) { const { fn, res, rej } = queue.shift(); running++; fn().then(res, rej).finally(() => { running--; pump(); }); } }
-function runClaude(prompt) {
-  return new Promise((res, rej) => {
-    const p = spawn(CLAUDE, ['-p', ...(MODEL ? ['--model', MODEL] : []), ...(EFFORT ? ['--effort', EFFORT] : []), '--tools', '', '--output-format', 'text'], { cwd: CACHE, stdio: ['pipe', 'pipe', 'pipe'] });
-    let out = '', err = '';
-    p.on('error', rej); p.stdin.on('error', () => {});
-    p.stdout.on('data', (d) => (out += d)); p.stderr.on('data', (d) => (err += d));
-    p.on('close', (code) => (code === 0 ? res(out) : rej(new Error(`claude exited ${code}: ${err.slice(0, 500)}`))));
-    p.stdin.end(prompt);
-  });
-}
-function parseJson(text) {
-  const s = text.indexOf('{'), e = text.lastIndexOf('}');
-  if (s < 0 || e < 0) throw new Error('no JSON in LLM output: ' + text.slice(0, 200));
-  return JSON.parse(text.slice(s, e + 1));
-}
-async function llm(tag, prompt) {
-  const key = createHash('sha256').update((MODEL || 'default') + prompt).digest('hex').slice(0, 16);
-  const cp = join(CACHE, `${tag.replace(/[^a-z0-9]+/gi, '_')}-${key}.json`);
-  if (existsSync(cp)) return JSON.parse(readFileSync(cp, 'utf8'));
-  return limit(async () => {
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        const t0 = Date.now(); log('llm start', tag);
-        const json = parseJson(await runClaude(prompt));
-        writeFileSync(cp, JSON.stringify(json, null, 2)); log('llm done', tag, `${((Date.now() - t0) / 1000).toFixed(0)}s`);
-        return json;
-      } catch (e) { log('llm fail', tag, attempt, e.message.slice(0, 200)); if (attempt === 3) throw e; }
-    }
-  });
-}
+const llm = createLlm({ cache: CACHE, log, onFail: 'throw' });
 const readSnippet = (p, n) => readRepo(p).slice(0, n);
 const fileLine = (f) => { const i = files.get(f); return `${f} (${i.loc} loc${i.exports.length ? '; exports: ' + i.exports.slice(0, 8).join(', ') : ''})`; };
 const STYLE = `Descriptions are for an architecture map that gets more detailed as the reader zooms in. shortDescription: one plain sentence, max ~15 words, says what it does. longDescription: 2-4 sentences, max ~70 words, concrete: responsibilities, key collaborators, notable design choices. No marketing words, no "This module". Answer with ONLY a JSON object, no prose, no code fences.`;
@@ -272,7 +235,7 @@ Schema: {"label":"${ROOT_NAME[0].toUpperCase() + ROOT_NAME.slice(1)}","shortDesc
 
   let nodeCount = 0, edgeCount = 0; const perLevel = [];
   (function walk(n, d) { nodeCount++; edgeCount += n.edges.length; perLevel[d] = (perLevel[d] || 0) + 1; n.children.forEach((c) => walk(c, d + 1)); })(root, 0);
-  const meta = { source: repoSource(), commit, generatedAt: new Date().toISOString(), model: MODEL, levels: perLevel.length, levelNames: ['system', 'packages', 'modules', 'files'], nodesPerLevel: perLevel, nodeCount, edgeCount, sourceFiles: files.size };
+  const meta = { source: repoSource(), commit, generatedAt: new Date().toISOString(), backend: llm.backend()?.name || '', model: llm.backend()?.model || process.env.LOUPE_MODEL || '', levels: perLevel.length, levelNames: ['system', 'packages', 'modules', 'files'], nodesPerLevel: perLevel, nodeCount, edgeCount, sourceFiles: files.size };
   writeFileSync(OUT, JSON.stringify({ meta, root }, null, 2));
   // ids must be unique across the whole tree; the viewer relies on it
   // sidecar for scripts/relations.mjs: every source file -> the deepest tree node that holds it
@@ -282,13 +245,14 @@ Schema: {"label":"${ROOT_NAME[0].toUpperCase() + ROOT_NAME.slice(1)}","shortDesc
     for (const f of mod.rest) fileMap[f] = `more:${pkg.dir}:${mod.key}`;
   }
   writeFileSync(OUT.replace(/\.json$/, '') + '.files.json', JSON.stringify(fileMap, null, 1));
+  log(llm.summary());
   log('wrote', OUT, JSON.stringify(meta));
 }
 // "github.com/owner/repo" from the origin remote, without credentials; falls back to the folder name
 function repoSource() {
   try {
-    const url = execFileSync('git', ['remote', 'get-url', 'origin'], { cwd: REPO, encoding: 'utf8' }).trim();
-    const m = url.match(/^(?:https?:\/\/(?:[^@/]+@)?|git@)([^/:]+)[/:](.+?)(?:\.git)?$/);
+    const url = git(REPO, ['remote', 'get-url', 'origin'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    const m = url.replace(/[?#].*$/, '').match(/^(?:https?:\/\/(?:[^@/]+@)?|git@)([^/:]+)[/:](.+?)(?:\.git)?$/);
     if (m) return `${m[1]}/${m[2]}`;
   } catch {}
   return posix.basename(REPO);
@@ -298,4 +262,4 @@ function commonDir(paths) {
   for (const p of paths) { const q = posix.dirname(p).split('/'); let i = 0; while (i < parts.length && parts[i] === q[i]) i++; parts = parts.slice(0, i); }
   return parts.join('/') || '.';
 }
-main().catch((e) => { console.error(e); process.exit(1); });
+main().catch((e) => { if (e instanceof BackendError) { console.error(e.message); process.exit(2); } console.error(e); process.exit(1); });

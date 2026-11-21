@@ -28,14 +28,53 @@ Try it: open [`demo/excalidraw/excalidraw.html`](demo/excalidraw/excalidraw.html
 
 ## Quickstart
 
-Requires Node 18 or later. `loupe scan` also needs [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed and signed in (the `claude` CLI). Loupe runs Claude Code headless, with tools disabled, to group files into modules and write the descriptions.
+Run it inside any git repo (Node 18 or later):
+
+```sh
+cd your-app
+npx @arjanj/loupe
+```
+
+That one command scans the code, groups files into modules, writes the descriptions, finds the connections and flows, renders the map and opens it in your browser:
+
+```
+loupe · mapping /home/you/your-app
+backend: claude (Claude Code CLI)
+[1/3] scanning structure + describing code …
+[2/3] finding relationships + flows …
+[3/3] rendering …
+✓ wrote architecture.html (412.6 KiB, 87 nodes) — opening in your browser
+```
+
+- **Output:** `architecture.html` in the repo root, one self-contained file.
+- **Working files:** `.loupe/` in the repo holds the tree (`.loupe/tree.json`) and the answer cache (`.loupe/cache/`). Loupe writes `.loupe/.gitignore` so none of it is committed; you can also add `.loupe/` to your own `.gitignore`. Answers are keyed by prompt, and prompts include the code, so a rerun only pays for what changed.
+- **Model:** Loupe needs one of these, and uses the first it finds:
+  1. **`claude`** — [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed and signed in (the `claude` CLI on your `PATH`). Loupe runs it headless with tools disabled.
+  2. **`anthropic`** — `ANTHROPIC_API_KEY` set: the Anthropic Messages API.
+  3. **`openai`** — `OPENAI_API_KEY` set: the OpenAI Chat Completions API.
+
+  With none of them, Loupe explains the options and exits before doing any work.
+
+```sh
+npx @arjanj/loupe [map] [repoDir] [options]   # repoDir defaults to the current directory
+  --out <file>        write the map somewhere else (relative to the current directory)
+  --no-open           don't open the browser (also skipped when CI or LOUPE_NO_OPEN is set, or output isn't a terminal)
+  --backend <name>    claude | anthropic | openai, instead of the automatic choice
+  --verbose           show every model call
+```
+
+The first map of a mid-size monorepo (around 500 source files) takes tens of minutes.
+
+### Step by step
+
+The one-command flow runs these steps. Run them yourself to control where files go, or to map a system of many repos.
 
 ```sh
 git clone https://github.com/ArjanJ/loupe && cd loupe && npm install
 
 # a single repo (a monorepo with npm/yarn/pnpm workspaces, or a plain package)
 git clone --depth 1 https://github.com/you/your-app input/your-app
-node bin/loupe.mjs scan input/your-app maps/your-app.tree.json        # structure + descriptions (Claude Code)
+node bin/loupe.mjs scan input/your-app maps/your-app.tree.json        # structure + descriptions (model)
 node bin/loupe.mjs relations input/your-app maps/your-app.tree.json   # typed connections + flows
 node bin/loupe.mjs render maps/your-app.tree.json                     # -> maps/your-app.html
 
@@ -44,17 +83,27 @@ node bin/loupe.mjs manifest examples/bramble/manifest.yaml
 node bin/loupe.mjs render examples/bramble/manifest.tree.json
 ```
 
-Answers from Claude Code are cached in `.loupe-cache/` next to the output, so a rerun costs nothing unless the code changed. The first scan of a mid-size monorepo (around 500 source files) takes tens of minutes.
+`scan` and `relations` accept `--backend` too. Here answers are cached in `.loupe-cache/` next to the output.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
+| `LOUPE_BACKEND` | automatic | `claude`, `anthropic` or `openai`; same as `--backend` |
+| `ANTHROPIC_API_KEY` | unset | enables the `anthropic` backend |
+| `OPENAI_API_KEY` | unset | enables the `openai` backend |
+| `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | API base URL, for proxies and gateways |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | API base URL, for proxies and OpenAI-compatible servers |
 | `LOUPE_CLAUDE_BIN` | `claude` | path to the Claude Code CLI |
-| `LOUPE_MODEL`, `LOUPE_EFFORT` | CLI defaults | passed as `--model` / `--effort` |
-| `LOUPE_CONCURRENCY` | `6` | parallel Claude Code calls |
+| `LOUPE_MODEL` | `claude`: the CLI's default; `anthropic`: `claude-opus-5-5`; `openai`: `gpt-4.1` | model to use |
+| `LOUPE_EFFORT` | backend default | `claude`: passed as `--effort`; `anthropic`: `output_config.effort` |
+| `LOUPE_CONCURRENCY` | `6` | parallel model calls |
 | `LOUPE_KEY_FILES` | `12` | files described per module; the rest become "+N more" |
 | `LOUPE_IGNORE` | none | regex of paths to leave out, e.g. `^(examples\|docs)/` |
-| `LOUPE_CACHE` | `<output dir>/.loupe-cache` | answer cache |
+| `LOUPE_CACHE` | `map`: `<repo>/.loupe/cache`; `scan`/`relations`: `<output dir>/.loupe-cache` | answer cache |
 | `LOUPE_NOLLM` | unset | `relations` only: use cached answers, skip new LLM calls |
+| `LOUPE_NO_OPEN` | unset | never open the browser |
+| `LOUPE_VERBOSE` | unset | same as `--verbose` |
+
+API keys are only sent to their API; Loupe never prints them, and redacts them from error messages.
 
 ## What Loupe detects
 
@@ -67,7 +116,7 @@ Answers from Claude Code are cached in `.loupe-cache/` next to the output, so a 
 - **External:** well-known SDKs (GitHub, Stripe, Slack, OpenAI, Anthropic, AWS, Google Cloud, Firebase, Supabase, Sentry and more), literal API hosts, and backends configured by `*_URL` environment variables.
 - **Webhooks:** routes under `/webhook(s)`.
 
-Claude Code then labels the rolled-up connections ("renders the scene") and proposes a few end-to-end flows. Loupe checks each flow step against the connections it detected.
+The model then labels the rolled-up connections ("renders the scene") and proposes a few end-to-end flows. Loupe checks each flow step against the connections it detected.
 
 ## Multi-repo systems
 
@@ -75,26 +124,27 @@ When a system spans many repos, describe it in a [system manifest](docs/manifest
 
 ## Privacy
 
-Everything runs on your machine. `scan` sends source excerpts to Claude through your own Claude Code CLI; nothing else leaves your machine. A rendered map embeds file paths, short code snippets as evidence, and the generated descriptions. Treat a map of a private repo as private: `input/`, `.loupe-cache/` and `private/` are gitignored here for that reason.
+Everything runs on your machine except the model. `scan` and `relations` send source excerpts and file paths to the backend you use (Claude through your Claude Code CLI, or the Anthropic or OpenAI API); nothing else leaves your machine. A rendered map embeds file paths, short code snippets as evidence, and the generated descriptions. Treat a map of a private repo as private: `input/`, `.loupe/`, `.loupe-cache/` and `private/` are gitignored here for that reason.
 
 ## Repository layout
 
 | Path | What |
 | --- | --- |
-| `bin/loupe.mjs` | the CLI: `scan`, `relations`, `manifest`, `render` |
-| `src/` | generator, relationship analysis, manifest converter, renderer |
+| `bin/loupe.mjs` | the CLI: `map` (the default), `scan`, `relations`, `manifest`, `render` |
+| `src/` | one-command flow, model backends, generator, relationship analysis, manifest converter, renderer |
 | `viewer/template.html` | the viewer: vanilla Canvas 2D, no dependencies |
 | `viewer/fonts/` | Inter and JetBrains Mono subsets (SIL OFL 1.1), embedded at render time |
 | `docs/` | [manifest schema](docs/manifest.md), [tree format](docs/tree-format.md), screenshots |
 | `examples/bramble/` | a fictional multi-repo system |
 | `demo/excalidraw/` | a map of Excalidraw (MIT), generated by Loupe |
-| `test/` | browser acceptance checks, an escaping test, the screenshot script (need Playwright) |
+| `test/` | the pipeline test (stub models, no network), browser acceptance checks, an escaping test, the screenshot script (need Playwright) |
 
 ## Tests
 
 ```sh
 npm i -D playwright && npx playwright install chromium
-npm test                                                   # escaping + acceptance on the example
+node test/pipeline.mjs                                     # one-command flow against stub models (no Playwright, no network)
+npm test                                                   # pipeline + escaping + acceptance on the example
 SCHEME=dark node test/acceptance.mjs demo/excalidraw/excalidraw.html
 npm run screenshots
 ```

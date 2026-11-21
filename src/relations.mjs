@@ -14,16 +14,12 @@
 // LOUPE_NOLLM=1 skips uncached LLM calls (static analysis only).
 import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync, realpathSync } from 'node:fs';
 import { join, dirname, relative, resolve, posix, isAbsolute } from 'node:path';
-import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createLlm } from './llm.mjs';
 
 if (!process.argv[2] || !process.argv[3]) { console.error('usage: loupe relations <repoDir> <tree.json>'); process.exit(2); }
 const REPO = resolve(process.argv[2]);
 const TREE = resolve(process.argv[3]);
 const CACHE = resolve(process.env.LOUPE_CACHE || join(dirname(TREE), '.loupe-cache'));
-const CLAUDE = process.env.LOUPE_CLAUDE_BIN || 'claude';
-const MODEL = process.env.LOUPE_MODEL || '';
-const EFFORT = process.env.LOUPE_EFFORT || '';
 const NOLLM = !!process.env.LOUPE_NOLLM;
 mkdirSync(CACHE, { recursive: true });
 const log = (...a) => console.error('[rel]', ...a);
@@ -380,33 +376,7 @@ function rollup(depth) {
 const pkgPairs = rollup(1), modPairs = rollup(2);
 log('rollups', pkgPairs.length, 'package pairs,', modPairs.length, 'module pairs');
 
-let running = 0; const queue = [];
-function limit(fn) { return new Promise((res, rej) => { queue.push({ fn, res, rej }); pump(); }); }
-const CONCURRENCY = Math.max(1, Number(process.env.LOUPE_CONCURRENCY) || 6);
-function pump() { while (running < CONCURRENCY && queue.length) { const { fn, res, rej } = queue.shift(); running++; fn().then(res, rej).finally(() => { running--; pump(); }); } }
-function runClaude(prompt) {
-  return new Promise((res, rej) => {
-    const p = spawn(CLAUDE, ['-p', ...(MODEL ? ['--model', MODEL] : []), ...(EFFORT ? ['--effort', EFFORT] : []), '--tools', '', '--output-format', 'text'], { cwd: CACHE, stdio: ['pipe', 'pipe', 'pipe'] });
-    let out = '', err = '';
-    p.on('error', rej); p.stdin.on('error', () => {});
-    p.stdout.on('data', (d) => (out += d)); p.stderr.on('data', (d) => (err += d));
-    p.on('close', (code) => (code === 0 ? res(out) : rej(new Error(`claude exited ${code}: ${err.slice(0, 300)}`))));
-    p.stdin.end(prompt);
-  });
-}
-const parseJson = (t) => { const s = t.indexOf('{'), e = t.lastIndexOf('}'); if (s < 0 || e < 0) throw new Error('no JSON'); return JSON.parse(t.slice(s, e + 1)); };
-async function llm(tag, prompt) {
-  const key = createHash('sha256').update((MODEL || 'default') + prompt).digest('hex').slice(0, 16);
-  const cp = join(CACHE, `${tag.replace(/[^a-z0-9]+/gi, '_')}-${key}.json`);
-  if (existsSync(cp)) return JSON.parse(readFileSync(cp, 'utf8'));
-  if (NOLLM) return {};
-  return limit(async () => {
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try { const t0 = Date.now(); log('llm start', tag); const j = parseJson(await runClaude(prompt)); writeFileSync(cp, JSON.stringify(j, null, 2)); log('llm done', tag, `${((Date.now() - t0) / 1000) | 0}s`); return j; }
-      catch (e) { log('llm fail', tag, attempt, String(e.message).slice(0, 160)); if (attempt === 3) return {}; }
-    }
-  });
-}
+const llm = createLlm({ cache: CACHE, log, nollm: NOLLM, onFail: 'empty' });
 const nodeLine = (id) => { const n = nodes.get(id); return `${id} = "${n.label}" (${n.shortDescription || ''})`; };
 const pairLine = (p) => `${p.from} -> ${p.to} | ${Object.entries(p.kinds).map(([k, v]) => `${k}×${v}`).join(', ')} | e.g. ${p.samples.slice(0, 6).join('; ')}`;
 const LABEL_RULES = `For each relationship write "label": 2-5 lowercase words saying what flows or what the caller does (e.g. "renders the scene", "reads user records", "posts alerts"), and "summary": one plain sentence, max 16 words. Be concrete, use the evidence, no marketing words. Answer with ONLY a JSON object, no prose, no code fences.`;
@@ -466,4 +436,5 @@ let nodeCount = 0; const perLevel = [];
 (function walk(n, d) { nodeCount++; perLevel[d] = (perLevel[d] || 0) + 1; n.children.forEach((c) => walk(c, d + 1)); })(root, 0);
 doc.meta.nodeCount = nodeCount; doc.meta.nodesPerLevel = perLevel;
 writeFileSync(TREE, JSON.stringify(doc, null, 2));
+log(llm.summary());
 log('wrote', TREE, JSON.stringify({ relations: relations.length, byKind, routes: routes.length, flows: flows.length, nodes: nodeCount }));
