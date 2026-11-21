@@ -153,6 +153,7 @@ body {
   top: 0;
   left: 0;
   right: 0;
+  height: clamp(740px, 102vh, 980px);
   height: clamp(740px, 102svh, 980px);
   overflow: hidden;
   pointer-events: none;
@@ -168,8 +169,10 @@ body {
     radial-gradient(58% 68% at 20% 24%, var(--wash-blue-1) 0%, var(--wash-blue-2) 28%, var(--wash-blue-3) 54%, transparent 74%),
     radial-gradient(56% 64% at 80% 44%, var(--wash-violet-1) 0%, var(--wash-violet-2) 28%, var(--wash-violet-3) 54%, transparent 74%),
     radial-gradient(44% 48% at 58% 22%, var(--wash-warm-1) 0%, var(--wash-warm-2) 32%, transparent 70%);
-  will-change: transform;
-  animation: wash-drift 46s ease-in-out infinite;
+}
+/* drift only on mouse/trackpad devices that allow motion: phones and tablets (any orientation) keep a static wash */
+@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
+  .bg-wash::before { will-change: transform; animation: wash-drift 46s ease-in-out infinite; }
 }
 @keyframes wash-drift {
   0% { transform: translate3d(0%, 0%, 0) scale(1); }
@@ -726,7 +729,7 @@ html.is-touch .hint.touch { display: block; }
 /* mobile */
 @media (max-width: 680px) {
   :root { --gutter: 16px; }
-  .bg-wash { height: clamp(520px, 72svh, 640px); }
+  .bg-wash { height: clamp(520px, 72vh, 640px); height: clamp(520px, 72svh, 640px); }
   .bg-wash::before { animation: none; will-change: auto; }
   .nav-in { height: 48px; }
   .nav-text { display: none; }
