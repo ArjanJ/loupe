@@ -1,0 +1,47 @@
+# Parked here until going live is approved. To enable: move it to .github/workflows/pages.yml, set Pages to
+# "GitHub Actions" in the repo settings, then run it by hand from the Actions tab.
+# Deploys the website (site/ + demo maps, built by `npm run site`) to GitHub Pages.
+# Manual only (workflow_dispatch) until Arjan approves going live; Pages must also be enabled in the repo settings.
+name: Pages
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: read # actions/configure-pages reads the Pages site config
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      # the build script uses only node:fs, so no npm install
+      - run: npm run site
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

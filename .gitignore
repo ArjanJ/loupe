@@ -8,3 +8,5 @@ node_modules
 # private maps: keep anything generated from a non-public system out of the repo
 private/
 maps/
+# the website build (npm run site)
+_site/
