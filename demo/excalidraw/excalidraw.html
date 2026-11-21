@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-ZP09+Wb23+M3ed2z04TFIADJeE7VkyOtDXV57ok/wrs=' 'sha256-QKMKy3V6z2+5HGidRoY88zk1B0QWjOC9cKUL1TQXHUg='; style-src 'unsafe-inline'; font-src data:; img-src data:; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-ZP09+Wb23+M3ed2z04TFIADJeE7VkyOtDXV57ok/wrs=' 'sha256-MUjTAtfrsLzvBsgtW5aBKEzRdaY2CsKqjCcwqQscOo8='; style-src 'unsafe-inline'; font-src data:; img-src data:; base-uri 'none'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>Loupe</title>
 <script>
@@ -432,6 +432,12 @@ const DATA = {"meta":{"source":"github.com/excalidraw/excalidraw","commit":"2c3d
     for (const n of nodes) if (!n.children.length && n.w > 0 && n.h > 0) need = Math.max(need, Math.min((W * 0.92) / n.w, ((H - 96) * 0.92) / n.h));
     maxScale = need;
     cam.scale = clampScale(rel * fitScale);
+    // a resize mid-flight (rotation, a mobile URL bar, an embedding page reflowing) keeps the flight's targets relative to the new fit
+    const k = fitScale / oldFit;
+    if (Number.isFinite(k) && k > 0 && k !== 1) {
+      if (fly) fly = { ...fly, from: { ...fly.from, scale: clampScale(fly.from.scale * k) }, to: { ...fly.to, scale: clampScale(fly.to.scale * k) } };
+      if (wheelAnim) wheelAnim.targetLog = Math.log(clampScale(Math.exp(wheelAnim.targetLog) * k));
+    }
     requestRender();
   }
 
