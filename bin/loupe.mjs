@@ -23,8 +23,10 @@ Options for map:
   --out <file>        where to write the map (default: <repoDir>/architecture.html)
   --no-open           don't open the map in your browser (also off when CI or LOUPE_NO_OPEN is set, or stdout isn't a terminal)
   --backend <name>    claude | anthropic | openai (default: claude if on PATH, else ANTHROPIC_API_KEY, else OPENAI_API_KEY)
+  --model <name>      model for that backend: a claude alias (sonnet, opus, haiku) or an API model id (also LOUPE_MODEL)
   --verbose           show every model call
-  scan and relations accept --backend too. Intermediate files and the answer cache go to <repoDir>/.loupe/.
+  In a terminal (not in CI), with no --backend/--model and no LOUPE_BACKEND/LOUPE_MODEL, map asks which model to use first.
+  scan and relations accept --backend and --model too. Intermediate files and the answer cache go to <repoDir>/.loupe/.
 
   -h, --help          this help
   -v, --version       print the version
@@ -38,16 +40,22 @@ if (cmd === '--help' || cmd === '-h' || cmd === 'help' || ((cmd === 'map' || cmd
 if (cmd === undefined || cmd.startsWith('-') || (!Object.hasOwn(COMMANDS, cmd) && existsSync(cmd) && statSync(cmd).isDirectory())) { args = cmd === undefined ? [] : [cmd, ...args]; cmd = 'map'; }
 if (!Object.hasOwn(COMMANDS, cmd)) { console.log(HELP); process.exit(2); }
 
-// --backend <name> / --backend=<name> on any subcommand becomes LOUPE_BACKEND for the step scripts
+// --backend / --model (<name> or =<name>) on scan, relations (any non-map subcommand) become LOUPE_BACKEND / LOUPE_MODEL for the step
+// scripts (the flag wins over the env); map parses its own (src/map.mjs). A bad model stops here, before any work.
 const env = { ...process.env };
 if (cmd !== 'map') {
+  const FLAGS = { '--backend': ['LOUPE_BACKEND', 'claude, anthropic or openai'], '--model': ['LOUPE_MODEL', 'e.g. sonnet or claude-sonnet-5-5'] };
   for (let i = 0; i < args.length; i++) {
-    let v;
-    if (args[i] === '--backend') { v = args[i + 1]; args.splice(i--, 2); }
-    else if (args[i].startsWith('--backend=')) { v = args[i].slice(10); args.splice(i--, 1); }
-    else continue;
-    if (!v || v.startsWith('-')) { console.error('loupe: --backend needs a value: claude, anthropic or openai'); process.exit(2); }
-    env.LOUPE_BACKEND = v;
+    const [flag, eq] = args[i].startsWith('--') ? args[i].split(/=(.*)/s) : [];
+    if (!Object.hasOwn(FLAGS, flag || '')) continue;
+    const v = eq !== undefined ? eq : args[i + 1];
+    args.splice(i--, eq !== undefined ? 1 : 2);
+    if (!v || (eq === undefined && v.startsWith('-'))) { console.error(`loupe: ${flag} needs a value: ${FLAGS[flag][1]}`); process.exit(2); }
+    env[FLAGS[flag][0]] = v;
+  }
+  if (env.LOUPE_MODEL && (cmd === 'scan' || cmd === 'relations')) { // render/manifest never use a model
+    const { validateModel } = await import('../src/llm.mjs');
+    try { validateModel(env.LOUPE_MODEL); } catch (e) { console.error(e.message); process.exit(2); }
   }
 }
 const r = spawnSync(process.execPath, [join(here, '..', 'src', COMMANDS[cmd][0]), ...args], { stdio: 'inherit', env });
