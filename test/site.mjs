@@ -22,7 +22,7 @@ for (const f of ['index.html', 'style.css', 'site.js', 'favicon.svg', 'demos/exc
 const html = readFileSync(join(SITE, 'index.html'), 'utf8');
 const css = readFileSync(join(SITE, 'style.css'), 'utf8');
 const refs = [];
-for (const m of html.matchAll(/<([a-z]+)\b[^>]*>/gi)) for (const a of m[0].matchAll(/\s(src|href|srcset|poster|data)\s*=\s*"([^"]*)"/gi)) refs.push({ tag: m[1].toLowerCase(), attr: a[1].toLowerCase(), url: a[2] });
+for (const m of html.matchAll(/<([a-z]+)\b[^>]*>/gi)) for (const a of m[0].matchAll(/\s(src|href|srcset|poster|data|data-src|data-href)\s*=\s*"([^"]*)"/gi)) refs.push({ tag: m[1].toLowerCase(), attr: a[1].toLowerCase(), url: a[2] });
 for (const m of css.matchAll(/url\(\s*["']?([^"')]+)/g)) refs.push({ tag: 'css', attr: 'url', url: m[1] });
 check(!/@import/i.test(css), 'style.css must not @import');
 const external = (u) => /^(https?:)?\/\//i.test(u);
@@ -35,6 +35,7 @@ for (const { tag, attr, url } of refs) {
 }
 for (const id of [...html.matchAll(/href="#([^"]+)"/g)].map((m) => m[1])) check(html.includes(`id="${id}"`), `dangling anchor #${id}`);
 check(!/\son[a-z]+\s*=/i.test(html), 'inline event handler in index.html');
+for (const m of html.matchAll(/<iframe\b[^>]*>/gi)) check(!/\sloading\s*=\s*"?lazy/i.test(m[0]), `demo iframe must not be loading="lazy" (breaks the Bramble fly animation, #16): ${m[0]}`);
 check(!/<script(?![^>]*\ssrc=)[^>]*>/i.test(html) && !/<style/i.test(html), 'inline script or style in index.html (breaks the CSP)');
 
 // 3. browser (served under /loupe/ to match GitHub Pages project URLs)
@@ -59,6 +60,31 @@ const mapReady = async (page, name) => {
 };
 // site.js opens each map one level deeper once it is on screen (the viewer's own level switcher)
 const opened = (frame) => frame.waitForFunction(() => document.querySelectorAll('#seg button')[1]?.getAttribute('aria-pressed') === 'true', null, { timeout: 8000 }).then(() => true, () => false);
+// verify a map actually rendered: finite camera scale in [fitScale*0.5, maxScale], non-zero canvas, and >= 3 visible cards inside the iframe viewport
+const checkMapRendered = async (frame, label) => {
+  if (!frame) { check(false, `${label}: frame not found`); return; }
+  await frame.waitForFunction(() => !window.__sz.animating, null, { timeout: 6000 }).catch(() => {});
+  const info = await frame.evaluate(() => {
+    const c = window.__sz?.camera;
+    const cv = document.getElementById('c');
+    const vis = (window.__sz?.visible?.() || []).filter((v) =>
+      v.depth >= 1 && v.alpha > 0.5 && v.sw > 10 && v.sh > 10 &&
+      v.sx + v.sw > 0 && v.sx < innerWidth && v.sy + v.sh > 0 && v.sy < innerHeight
+    );
+    return {
+      cam: c ? { x: c.x, y: c.y, scale: c.scale, fitScale: c.fitScale, maxScale: c.maxScale } : null,
+      finite: !!c && [c.x, c.y, c.scale, c.fitScale, c.maxScale].every(Number.isFinite),
+      inRange: !!c && Number.isFinite(c.scale) && c.scale >= c.fitScale * 0.5 && c.scale <= c.maxScale,
+      canvasW: cv ? cv.width : 0,
+      canvasH: cv ? cv.height : 0,
+      inner: [innerWidth, innerHeight],
+      visCount: vis.length,
+    };
+  });
+  check(info.finite && info.inRange, `${label}: camera scale out of range or non-finite (${JSON.stringify(info.cam)})`);
+  check(info.canvasW > 0 && info.canvasH > 0, `${label}: canvas has zero size (${info.canvasW}x${info.canvasH})`);
+  check(info.visCount >= 3, `${label}: expected >= 3 visible cards inside viewport, got ${info.visCount} (inner=${info.inner.join('x')}, cam=${JSON.stringify(info.cam)})`);
+};
 // verify the inspector's Close button centre (mapped through --s) is hit-testable on the iframe, not covered by the Full screen pill
 const checkInspectorCloseClear = async (page, frame, label) => {
   const synced = await page.waitForFunction(() => document.getElementById('stage')?.classList.contains('has-inspector'), null, { timeout: 3000 }).then(() => true, () => false);
@@ -108,7 +134,7 @@ try {
     // wait for subtle entrance animations to settle before measuring hero geometry
     await page.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished.catch(() => {}))));
 
-    // desktop hero: demo iframe starts within the upper viewport, dominates (>= 45%), with no veil blocking interaction, and controls overlaid inside frame
+    // desktop hero: 16:10 laptop-shaped frame starting in the upper viewport, visible share >= 40%, veil-free, controls overlaid inside frame
     const hero = await page.evaluate(() => {
       const frame = document.querySelector('#panel-excalidraw .frame');
       const iframe = document.querySelector('#panel-excalidraw iframe');
@@ -123,6 +149,9 @@ try {
       const visH = Math.max(0, Math.min(r.bottom, innerHeight) - Math.max(r.top, 0));
       return {
         top: Math.round(r.top),
+        aspect: fr.width / fr.height,
+        w: Math.round(fr.width),
+        h: Math.round(fr.height),
         ratio: (visW * visH) / (innerWidth * innerHeight),
         veilHidden: getComputedStyle(veil).display === 'none',
         tabsInside: tr.top >= fr.top && tr.bottom <= fr.bottom && tr.left >= fr.left && tr.right <= fr.right,
@@ -131,7 +160,8 @@ try {
       };
     });
     check(hero.top <= 400, `${colorScheme}: desktop demo iframe starts at y=${hero.top}px (expected <= 400px)`);
-    check(hero.ratio >= 0.45, `${colorScheme}: desktop demo iframe covers only ${(hero.ratio * 100).toFixed(1)}% of first viewport (expected >= 45%)`);
+    check(Math.abs(hero.aspect - 1.6) <= 0.05, `${colorScheme}: desktop 1440px frame aspect ratio is ${hero.aspect.toFixed(3)} (${hero.w}x${hero.h}, expected 1.6 ±0.05)`);
+    check(hero.ratio >= 0.40, `${colorScheme}: desktop demo iframe covers only ${(hero.ratio * 100).toFixed(1)}% of first viewport (expected >= 40%)`);
     check(hero.veilHidden, `${colorScheme}: desktop touch veil should be hidden`);
     check(hero.tabsInside, `${colorScheme}: desktop demo tabs should be overlaid inside the frame`);
     check(hero.fullInside && hero.fullAccessible, `${colorScheme}: desktop full-screen button should be overlaid inside the frame with accessible name`);
@@ -140,6 +170,7 @@ try {
     check(ex, `${colorScheme}: Excalidraw map did not load`);
     check(ex && await opened(ex), `${colorScheme}: Excalidraw map did not open a level deeper`);
     check(await page.evaluate(() => document.activeElement === document.body), `${colorScheme}: opening the map moved focus`);
+    await checkMapRendered(ex, `${colorScheme} desktop Excalidraw`);
 
     // dot-grid calming applied cleanly without throwing
     if (ex) {
@@ -165,7 +196,7 @@ try {
       }
     }
 
-    // tabs with the keyboard
+    // tabs with the keyboard: switch to Bramble, verify rendered, switch back to Excalidraw, and to Bramble again
     await page.focus('#tab-excalidraw');
     await page.keyboard.press('ArrowRight');
     const st = await page.evaluate(() => ({
@@ -179,14 +210,105 @@ try {
     const br = await mapReady(page, 'bramble');
     check(br, `${colorScheme}: Bramble map did not load`);
     check(br && await opened(br), `${colorScheme}: Bramble map did not open a level deeper`);
+    await checkMapRendered(br, `${colorScheme} desktop Bramble`);
     await page.keyboard.press('End'); await page.keyboard.press('Home');
     check(await page.evaluate(() => document.activeElement.id === 'tab-excalidraw' && !document.getElementById('panel-excalidraw').hidden && document.getElementById('full-link').getAttribute('href') === 'demos/excalidraw.html'), `${colorScheme}: Home did not return to Excalidraw`);
+    await page.waitForTimeout(100);
+    await checkMapRendered(ex, `${colorScheme} desktop Excalidraw after return`);
+    await page.click('#tab-bramble');
+    await page.waitForTimeout(100);
+    await checkMapRendered(br, `${colorScheme} desktop Bramble second visit`);
+    await page.click('#tab-excalidraw');
 
     // copy button, keyboard-activated
     await page.focus('[data-copy]'); await page.keyboard.press('Enter');
     const said = await page.waitForFunction(() => /Copied|⌘C|Ctrl\+C/.test(document.querySelector('.copy-label').textContent) && document.getElementById('live').textContent, null, { timeout: 3000 }).then((h) => h.jsonValue(), () => '');
     check(/Copied npx @arjanj\/loupe|selected/.test(said), `${colorScheme}: copy was not announced`);
     check(!errs.length, `${colorScheme}: ${errs.join(' | ')}`);
+    await ctx.close();
+  }
+
+  // 1280px laptop viewport + prefers-reduced-motion: 16:10 frame ratio, hero coverage, and both tabs render cleanly
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, reducedMotion: 'reduce' });
+    const page = await ctx.newPage();
+    const errs = [];
+    page.on('pageerror', (e) => errs.push(e.message));
+    page.on('console', (m) => m.type() === 'error' && errs.push(m.text()));
+    await page.goto(BASE, { waitUntil: 'domcontentloaded' });
+    await page.evaluate(() => document.fonts.ready);
+    const geom = await page.evaluate(() => {
+      const fr = document.querySelector('#panel-excalidraw .frame').getBoundingClientRect();
+      const visW = Math.max(0, Math.min(fr.right, innerWidth) - Math.max(fr.left, 0));
+      const visH = Math.max(0, Math.min(fr.bottom, innerHeight) - Math.max(fr.top, 0));
+      return { top: Math.round(fr.top), aspect: fr.width / fr.height, w: Math.round(fr.width), h: Math.round(fr.height), ratio: (visW * visH) / (innerWidth * innerHeight) };
+    });
+    check(geom.top <= 400, `1280px: frame starts at y=${geom.top}px (expected <= 400px)`);
+    check(Math.abs(geom.aspect - 1.6) <= 0.05, `1280px: frame aspect ratio is ${geom.aspect.toFixed(3)} (${geom.w}x${geom.h}, expected 1.6 ±0.05)`);
+    check(geom.ratio >= 0.40, `1280px: frame covers only ${(geom.ratio * 100).toFixed(1)}% of first viewport (expected >= 40%)`);
+    const ex = await mapReady(page, 'excalidraw');
+    check(ex && await opened(ex), '1280px reduced-motion: Excalidraw did not open a level deeper');
+    await checkMapRendered(ex, '1280px reduced-motion Excalidraw');
+    await page.click('#tab-bramble');
+    const br = await mapReady(page, 'bramble');
+    check(br && await opened(br), '1280px reduced-motion: Bramble did not open a level deeper');
+    await checkMapRendered(br, '1280px reduced-motion Bramble');
+    check(!errs.length, `1280px reduced-motion: ${errs.join(' | ')}`);
+    await ctx.close();
+  }
+
+  // switching to Bramble immediately before Excalidraw finishes loading: both tabs must still render cleanly
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page = await ctx.newPage();
+    const errs = [];
+    page.on('pageerror', (e) => errs.push(e.message));
+    page.on('console', (m) => m.type() === 'error' && errs.push(m.text()));
+    await page.goto(BASE, { waitUntil: 'domcontentloaded' });
+    await page.click('#tab-bramble');
+    const br = await mapReady(page, 'bramble');
+    check(br && await opened(br), 'early-switch: Bramble did not open a level deeper');
+    await checkMapRendered(br, 'early-switch Bramble');
+    await page.click('#tab-excalidraw');
+    const ex = await mapReady(page, 'excalidraw');
+    check(ex && await opened(ex), 'early-switch: Excalidraw did not open a level deeper after returning');
+    await checkMapRendered(ex, 'early-switch Excalidraw');
+    check(!errs.length, `early-switch: ${errs.join(' | ')}`);
+    await ctx.close();
+  }
+
+  // late first switch: Bramble first loaded >= 2 s after page load (regression for #16: lazy hidden iframe -> camera scale Infinity, blank map)
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page = await ctx.newPage();
+    const errs = [];
+    page.on('pageerror', (e) => errs.push(e.message));
+    page.on('console', (m) => m.type() === 'error' && errs.push(m.text()));
+    await page.goto(BASE, { waitUntil: 'domcontentloaded' });
+    const ex = await mapReady(page, 'excalidraw');
+    check(ex && await opened(ex), 'late-switch: Excalidraw did not open a level deeper');
+    await page.waitForTimeout(3000);
+    await page.click('#tab-bramble');
+    const br = await mapReady(page, 'bramble');
+    check(br, 'late-switch: Bramble map did not load');
+    check(br && await opened(br), 'late-switch: Bramble did not open a level deeper');
+    // the broken fly self-heals after ~4 s, so sample the camera during the fly instead of only after it settles
+    if (br) {
+      const bad = await br.evaluate(() => new Promise((res) => {
+        const t0 = performance.now();
+        const tick = () => {
+          const s = window.__sz.camera.scale;
+          if (!Number.isFinite(s)) return res({ t: Math.round(performance.now() - t0), scale: String(s) });
+          if (performance.now() - t0 > 2500) return res(null);
+          setTimeout(tick, 50);
+        };
+        tick();
+      }));
+      check(!bad, `late-switch Bramble: camera scale went non-finite during the fly (${JSON.stringify(bad)})`);
+      check(await br.waitForFunction(() => !window.__sz.animating, null, { timeout: 4000 }).then(() => true, () => false), 'late-switch Bramble: fly animation did not settle within 4 s');
+    }
+    await checkMapRendered(br, 'late-switch Bramble');
+    check(!errs.length, `late-switch: ${errs.join(' | ')}`);
     await ctx.close();
   }
 
@@ -226,18 +348,24 @@ try {
         }
       }
     }
+    if (width === 768) {
+      await page.click('#tab-bramble');
+      const br = await mapReady(page, 'bramble');
+      check(br && await opened(br), 'tablet 768px: Bramble map did not open a level deeper');
+      await checkMapRendered(br, 'tablet 768px Bramble');
+    }
     check(!errs.length, `tablet ${width}px: ${errs.join(' | ')}`);
     await ctx.close();
   }
 
-  // phone: no horizontal overflow down to 320px, touch wording, scaled map with unclipped HUD behind a veil, tap + pinch work
-  const ctx = await browser.newContext({ viewport: { width: 375, height: 740 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+  // phone: no horizontal overflow down to 320px, touch wording, scaled map with unclipped HUD behind a veil, tap + pinch + Bramble tab work
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
   const page = await ctx.newPage();
   const errs = [];
   page.on('pageerror', (e) => errs.push(e.message));
   await page.goto(BASE, { waitUntil: 'domcontentloaded' }); await page.evaluate(() => document.fonts.ready);
-  for (const w of [320, 360, 375]) {
-    await page.setViewportSize({ width: w, height: 740 });
+  for (const w of [320, 360, 375, 390]) {
+    await page.setViewportSize({ width: w, height: 844 });
     await page.waitForTimeout(50);
     const ov = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     check(ov <= 0, `horizontal overflow at ${w}px: ${ov}px`);
@@ -283,10 +411,22 @@ try {
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await page.waitForTimeout(100);
     const after = await fx.evaluate(() => window.__sz.camera.scale);
     check(after > before * 1.5, `phone: pinch did not zoom the map (${before} -> ${after})`);
+
+    // switch to Bramble on mobile, back to Excalidraw, and to Bramble again
+    await page.tap('#tab-bramble');
+    const fbr = await mapReady(page, 'bramble');
+    check(fbr && await opened(fbr), 'phone: Bramble map did not open a level deeper');
+    await checkMapRendered(fbr, 'phone Bramble');
+    await page.tap('#tab-excalidraw');
+    await page.waitForTimeout(100);
+    await checkMapRendered(fx, 'phone Excalidraw after return');
+    await page.tap('#tab-bramble');
+    await page.waitForTimeout(100);
+    await checkMapRendered(fbr, 'phone Bramble second visit');
   }
   check(!errs.length, `phone: ${errs.join(' | ')}`);
   await ctx.close();
 } finally { await browser.close(); server.close(); }
 
 if (fails.length) { console.error('site: FAIL\n  ' + fails.join('\n  ')); process.exit(1); }
-console.log('site: ok (build, references, light + dark, hero >=45% & veil-free, overlays, dot-calming, maps open deeper, tabs, copy, phone: no overflow, unclipped HUD, touch hint, tap + pinch)');
+console.log('site: ok (build, references, light + dark, 16:10 hero >=40% & veil-free, overlays, dot-calming, maps open deeper & render on Bramble/Excalidraw switching, reduced-motion, early-switch, late-switch, tablet, copy, phone: no overflow, unclipped HUD, touch hint, tap + pinch + Bramble)');

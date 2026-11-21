@@ -331,7 +331,9 @@ h1, h2, p { margin: 0; }
 }
 .frame {
   position: relative;
-  height: clamp(540px, calc(100svh - 360px), 680px);
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  max-height: 820px;
   border-radius: 28px;
   overflow: hidden;
   background: var(--frame-bg);

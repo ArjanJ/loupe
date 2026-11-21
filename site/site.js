@@ -52,11 +52,56 @@
   const isHttp = location.protocol === 'http:' || location.protocol === 'https:';
   const viewer = (frame) => {
     if (!isHttp) return null;
+    const src = frame.getAttribute('src');
+    if (!src) return null;
     try {
       const w = frame.contentWindow;
-      return w && w.location.href.endsWith(frame.getAttribute('src')) && w.document.readyState === 'complete' && w.document.getElementById('seg') ? w : null;
+      return w && w.location.href.endsWith(src) && w.document.readyState === 'complete' && w.document.getElementById('seg') ? w : null;
     } catch { return null; }
   };
+
+  // Narrow screens: render the map at a wider logical width and scale it down, so cards and the full viewer HUD (including breadcrumbs) fit without clipping.
+  const MIN_W = 760;
+  function scaleFrame(box) {
+    if (!box) return;
+    const w = box.clientWidth, on = w > 0 && w < MIN_W;
+    box.classList.toggle('scaled', on);
+    box.style.setProperty('--lw', `${MIN_W}px`);
+    box.style.setProperty('--s', on ? String(w / MIN_W) : '1');
+  }
+
+  function isFrameSized(frame) {
+    if (!frame || frame.closest('[hidden]')) return false;
+    const r = frame.getBoundingClientRect();
+    if (r.width <= 0 || r.height <= 0) return false;
+    const w = viewer(frame);
+    return !w || (w.innerWidth > 0 && w.innerHeight > 0);
+  }
+
+  function cameraValid(w) {
+    const c = w && w.__sz && w.__sz.camera;
+    if (!c) return false;
+    if (![c.x, c.y, c.scale, c.fitScale, c.maxScale].every(Number.isFinite)) return false;
+    if (c.fitScale <= 1e-5 || c.maxScale <= 1e-5) return false;
+    if (c.scale < c.fitScale * 0.25 || c.scale > c.maxScale * 1.01) return false;
+    if (c.x < -800 || c.x > 2400 || c.y < -500 || c.y > 1500) return false;
+    return true;
+  }
+
+  function recoverCamera(frame, w) {
+    const sz = w && w.__sz;
+    if (!sz) return;
+    if (sz.camera && sz.camera.fitScale <= 1e-5) {
+      w.dispatchEvent(new w.Event('resize'));
+    }
+    if (frame.dataset.zeroBoot === '1' || !cameraValid(w)) {
+      delete frame.dataset.zeroBoot;
+      initCam.delete(frame);
+      const root = sz.nodes && sz.nodes.find((n) => !n.parent);
+      if (frame.dataset.opened && root) sz.fitNode(root.id, false);
+      else sz.home(false);
+    }
+  }
 
   function syncInspectorState() {
     if (!stage) return;
@@ -70,14 +115,37 @@
     stage.classList.toggle('has-inspector', open);
   }
 
+  function activatePanel(panel) {
+    if (!panel || panel.hidden) return;
+    scaleFrame(panel.querySelector('.frame'));
+    const frame = panel.querySelector('iframe');
+    if (!frame) return;
+    if (!frame.getAttribute('src') && frame.dataset.src) {
+      frame.setAttribute('src', frame.dataset.src);
+      return;
+    }
+    requestAnimationFrame(() => {
+      if (!isFrameSized(frame)) return;
+      const w = viewer(frame);
+      if (!w) return;
+      recoverCamera(frame, w);
+      watch(frame);
+      if (!frame.dataset.opened && frame.dataset.seen) deepen(frame);
+    });
+  }
+
   function select(tab, focus) {
+    let activePanel = null;
     for (const t of tabs) {
       const on = t === tab;
       t.setAttribute('aria-selected', String(on));
       t.tabIndex = on ? 0 : -1;
-      document.getElementById(t.getAttribute('aria-controls')).hidden = !on;
+      const panel = document.getElementById(t.getAttribute('aria-controls'));
+      panel.hidden = !on;
+      if (on) activePanel = panel;
     }
     if (fullLink && tab.dataset.href) fullLink.setAttribute('href', tab.dataset.href);
+    activatePanel(activePanel);
     syncInspectorState();
     if (focus) tab.focus();
   }
@@ -93,7 +161,7 @@
   });
 
   // Refine embedded viewer surface via CSSOM: match frame backdrop and calm the dot grid.
-  const styledFrames = new WeakSet();
+  const styledDocs = new WeakSet();
   function styleViewerSurface(frame) {
     const w = viewer(frame);
     if (!w) return;
@@ -119,8 +187,8 @@
         }
       };
       apply();
-      if (!styledFrames.has(frame)) {
-        styledFrames.add(frame);
+      if (!styledDocs.has(doc)) {
+        styledDocs.add(doc);
         const mo = new MutationObserver(() => apply());
         mo.observe(root, { attributes: true, attributeFilter: ['data-theme'] });
         const insp = doc.getElementById('insp');
@@ -135,21 +203,33 @@
   // Open one level deeper than the viewer's first screen (one closed card), using the viewer's own level switcher.
   // Only once, only while the visitor hasn't moved the map yet, and without focusing anything or scrolling the page.
   const initCam = new WeakMap();
+  const watchedDocs = new WeakSet();
   function watch(frame) {
     const w = viewer(frame);
     if (!w) return;
     styleViewerSurface(frame);
-    if (initCam.has(frame)) return;
     try {
+      const doc = w.document;
+      if (!watchedDocs.has(doc)) {
+        watchedDocs.add(doc);
+        const skip = () => { frame.dataset.opened = '1'; };
+        for (const ev of ['pointerdown', 'wheel', 'keydown']) doc.addEventListener(ev, skip, { capture: true, once: true, passive: true });
+      }
       const c = w.__sz && w.__sz.camera;
-      if (c && c.fitScale) initCam.set(frame, { x: c.x, y: c.y, rel: c.scale / c.fitScale });
-      const skip = () => { frame.dataset.opened = '1'; };
-      for (const ev of ['pointerdown', 'wheel', 'keydown']) w.document.addEventListener(ev, skip, { capture: true, once: true, passive: true });
+      if (!isFrameSized(frame) || !c || c.fitScale <= 1e-5) {
+        frame.dataset.zeroBoot = '1';
+        return;
+      }
+      if (!initCam.has(frame) && cameraValid(w)) {
+        initCam.set(frame, { x: c.x, y: c.y, rel: c.scale / c.fitScale });
+      }
     } catch { /* same-origin guard */ }
   }
   function deepen(frame) {
+    if (!isFrameSized(frame)) return;
     const w = viewer(frame);
     if (!w || frame.dataset.opened) return;
+    recoverCamera(frame, w);
     watch(frame);
     const seg = [...w.document.querySelectorAll('#seg button')];
     if (seg.length < 2) return;
@@ -172,25 +252,18 @@
   const seen = new IntersectionObserver((entries) => {
     for (const e of entries) e.target.dataset.seen = e.isIntersecting ? '1' : '';
     for (const e of entries) if (e.isIntersecting) deepen(e.target);
-  }, { threshold: 0.4 });
+  }, { threshold: 0.3 });
   for (const frame of document.querySelectorAll('.frame iframe')) {
     seen.observe(frame);
     watch(frame);
     frame.addEventListener('load', () => {
       watch(frame);
-      if (frame.dataset.seen) setTimeout(() => deepen(frame), 250);
+      if (frame.dataset.seen && isFrameSized(frame)) setTimeout(() => deepen(frame), 250);
     });
   }
 
-  // Narrow screens: render the map at a wider logical width and scale it down, so cards and the full viewer HUD (including breadcrumbs) fit without clipping.
-  const MIN_W = 760;
   const fit = new ResizeObserver((entries) => {
-    for (const { target } of entries) {
-      const w = target.clientWidth, on = w > 0 && w < MIN_W;
-      target.classList.toggle('scaled', on);
-      target.style.setProperty('--lw', `${MIN_W}px`);
-      target.style.setProperty('--s', on ? String(w / MIN_W) : '1');
-    }
+    for (const { target } of entries) scaleFrame(target);
   });
   for (const frame of document.querySelectorAll('.frame')) fit.observe(frame);
 
