@@ -1,8 +1,18 @@
 # Deploys the website (site/ + demo maps, built by `npm run site`) to GitHub Pages.
-# Manual only (workflow_dispatch). The repo's Pages source is currently the gh-pages branch; to deploy with this workflow, set Settings → Pages → Source to "GitHub Actions" first.
+# Runs on every push to main that touches the site or the maps it embeds, and on demand (workflow_dispatch).
+# Requires Settings → Pages → Source = "GitHub Actions" (build_type=workflow).
 name: Pages
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - 'demo/**'
+      - 'examples/**'
+      - 'viewer/**'
+      - 'scripts/build-site.mjs'
+      - '.github/workflows/pages.yml'
   workflow_dispatch:
 
 permissions: {}
