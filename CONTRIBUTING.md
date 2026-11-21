@@ -37,7 +37,7 @@ If Playwright is installed in another directory, point `PLAYWRIGHT_DIR=/path/to/
 
 ## CI workflow
 
-A ready-to-enable GitHub Actions CI workflow lives at [`scripts/ci-workflow.yml`](scripts/ci-workflow.yml) (parked outside `.github/workflows/` until enabled). It runs `npm ci`, `npx playwright install --with-deps chromium`, and `npm test` across Node 20, 22 and 24, plus the browser-free tests (`test/pipeline.mjs`, `test/picker.mjs`) on Node 18.
+GitHub Actions CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs on every push and pull request. It runs `npm ci`, `npx playwright install --with-deps chromium`, and `npm test` across Node 20, 22 and 24, plus the browser-free tests (`test/pipeline.mjs`, `test/picker.mjs`) on Node 18.
 
 ## Pull requests
 

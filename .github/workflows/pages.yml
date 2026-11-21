@@ -1,7 +1,5 @@
-# Parked here until going live is approved. To enable: move it to .github/workflows/pages.yml, set Pages to
-# "GitHub Actions" in the repo settings, then run it by hand from the Actions tab.
 # Deploys the website (site/ + demo maps, built by `npm run site`) to GitHub Pages.
-# Manual only (workflow_dispatch) until Arjan approves going live; Pages must also be enabled in the repo settings.
+# Manual only (workflow_dispatch). The repo's Pages source is currently the gh-pages branch; to deploy with this workflow, set Settings → Pages → Source to "GitHub Actions" first.
 name: Pages
 
 on:

@@ -1,4 +1,3 @@
-# Parked here until CI is enabled. Move to .github/workflows/ci.yml to activate.
 name: CI
 
 on:
