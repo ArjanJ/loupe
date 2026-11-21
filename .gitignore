@@ -1,6 +1,7 @@
 # repos you scan are cloned here and never committed
 input/
 .loupe-cache/
+.loupe/
 node_modules
 *.log
 .DS_Store
