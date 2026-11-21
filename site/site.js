@@ -3,7 +3,7 @@
   const live = document.getElementById('live');
   const announce = (msg) => { live.textContent = ''; setTimeout(() => { live.textContent = msg; }, 30); };
 
-  // Copy buttons: the Clipboard API where allowed (https, localhost), else a hidden textarea + execCommand (file://, old browsers).
+  // Copy button: Clipboard API where allowed (https, localhost), else hidden textarea + execCommand (file://, older browsers).
   async function copyText(text) {
     try { if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; } } catch { /* fall through */ }
     const ta = Object.assign(document.createElement('textarea'), { value: text, readOnly: true });
@@ -19,10 +19,11 @@
     const label = btn.querySelector('.copy-label');
     let timer;
     btn.addEventListener('click', async () => {
-      const text = document.getElementById(btn.dataset.copy).innerText.trim(); // innerText: one line per command
+      const target = document.getElementById(btn.dataset.copy);
+      const text = target.innerText.trim();
       const ok = await copyText(text);
-      if (!ok) { // last resort: select the command so ⌘C / Ctrl+C works
-        const r = document.createRange(); r.selectNodeContents(document.getElementById(btn.dataset.copy));
+      if (!ok) {
+        const r = document.createRange(); r.selectNodeContents(target);
         const s = getSelection(); s.removeAllRanges(); s.addRange(r);
       }
       btn.classList.toggle('done', ok);
@@ -35,6 +36,7 @@
 
   // Demo tabs (WAI-ARIA tabs, automatic activation): arrows, Home and End move between tabs.
   const tabs = [...document.querySelectorAll('[role="tab"]')];
+  const fullLink = document.getElementById('full-link');
   function select(tab, focus) {
     for (const t of tabs) {
       const on = t === tab;
@@ -42,6 +44,7 @@
       t.tabIndex = on ? 0 : -1;
       document.getElementById(t.getAttribute('aria-controls')).hidden = !on;
     }
+    if (fullLink && tab.dataset.href) fullLink.setAttribute('href', tab.dataset.href);
     if (focus) tab.focus();
   }
   tabs.forEach((tab, i) => {
@@ -80,14 +83,20 @@
     const w = viewer(frame);
     if (!w || frame.dataset.opened) return;
     watch(frame);
+    const seg = [...w.document.querySelectorAll('#seg button')];
+    if (seg.length < 2) return;
+    // Viewer marks the initial level pressed on its first animation frame; retry on next frame if not painted yet.
+    if (!seg.some((b) => b.getAttribute('aria-pressed') === 'true')) {
+      w.requestAnimationFrame(() => deepen(frame));
+      return;
+    }
     const c = w.__sz && w.__sz.camera, c0 = initCam.get(frame);
     if (c && c0 && (Math.abs(c.x - c0.x) > 1 || Math.abs(c.y - c0.y) > 1 || (c.fitScale && Math.abs(c.scale / c.fitScale - c0.rel) > 1e-3))) {
       frame.dataset.opened = '1';
       return;
     }
     frame.dataset.opened = '1';
-    const seg = w.document.querySelectorAll('#seg button');
-    if (seg.length < 2 || seg[0].getAttribute('aria-pressed') !== 'true') return;
+    if (seg[0].getAttribute('aria-pressed') !== 'true') return;
     const sz = w.__sz, root = sz && sz.nodes && sz.nodes.find((n) => !n.parent);
     if (calm && root) sz.fitNode(root.id, false); // no flight when motion is unwelcome
     else seg[1].click();
@@ -105,8 +114,8 @@
     });
   }
 
-  // Narrow screens: render the map at a wider logical width and scale it down, so card titles and the map's controls fit.
-  const MIN_W = 560;
+  // Narrow screens: render the map at a wider logical width and scale it down, so cards and the full viewer HUD (including breadcrumbs) fit without clipping.
+  const MIN_W = 760;
   const fit = new ResizeObserver((entries) => {
     for (const { target } of entries) {
       const w = target.clientWidth, on = w > 0 && w < MIN_W;
@@ -117,24 +126,21 @@
   });
   for (const frame of document.querySelectorAll('.frame')) fit.observe(frame);
 
-  // Touch screens: a veil keeps the page scrollable until the visitor taps into the map.
+  // Subtle nav hairline transition on scroll.
+  const nav = document.getElementById('nav');
+  if (nav) {
+    const syncNav = () => nav.classList.toggle('scrolled', scrollY > 4);
+    syncNav();
+    addEventListener('scroll', syncNav, { passive: true });
+  }
+
+  // Touch screens: keep touch-only UI stable on touch devices and dismiss the veil on tap.
+  if (matchMedia('(hover: none) and (pointer: coarse)').matches) document.documentElement.classList.add('is-touch');
   for (const veil of document.querySelectorAll('.veil')) {
     veil.addEventListener('click', () => {
       const f = veil.parentElement.querySelector('iframe');
       veil.remove();
       f?.focus({ preventScroll: true });
     });
-  }
-
-  // Fade/rise sections in as they scroll into view, only when motion is welcome. Content stays visible without JS.
-  if (!calm && 'IntersectionObserver' in window) {
-    const io = new IntersectionObserver((entries) => {
-      for (const e of entries) if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
-    }, { rootMargin: '0px 0px -8% 0px', threshold: 0.08 });
-    const items = document.querySelectorAll('.reveal');
-    // anything already on screen shows at once: no flash of hidden content above the fold
-    const vh = innerHeight;
-    for (const el of items) { if (el.getBoundingClientRect().top < vh) el.classList.add('in'); else io.observe(el); }
-    document.documentElement.classList.add('anim');
   }
 })();

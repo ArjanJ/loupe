@@ -180,7 +180,7 @@ npm run screenshots
 npm run site && python3 -m http.server -d _site 8080   # then open http://localhost:8080
 ```
 
-Opening `_site/index.html` straight from disk works too, but the embedded maps then stay on their first screen. The feature images in `site/assets/` are captures of the demo maps; `node scripts/capture-site-images.mjs` regenerates them (needs Playwright). `node test/site.mjs` checks the build (it is part of `npm test`). `scripts/pages-workflow.yml` is a GitHub Pages deploy workflow, parked outside `.github/workflows/` until the site goes live; once moved there it only runs when triggered by hand.
+Opening `_site/index.html` straight from disk works too, but the embedded maps then stay on their first screen. `node test/site.mjs` checks the build (it is part of `npm test`). `scripts/pages-workflow.yml` is a GitHub Pages deploy workflow, parked outside `.github/workflows/` until the site goes live; once moved there it only runs when triggered by hand.
 
 ## License
 
