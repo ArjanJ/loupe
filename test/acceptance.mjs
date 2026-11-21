@@ -162,19 +162,28 @@ await other.close();
 // 8. appearance control: System -> Light -> Dark, remembered across reloads, applied before first paint,
 //    the canvas repaints in the same task as the click, and a live OS change applies only while on System
 results.appearance = await (async () => {
+  try {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1, colorScheme: 'light' });
   const pg = await ctx.newPage();
   pg.on('pageerror', (e) => errors.push(e.message));
-  // record the theme attribute at the moment <body> is created (i.e. before anything can paint)
-  await ctx.addInitScript(() => { new MutationObserver((m, o) => { if (document.body) { window.__themeAtBody = document.documentElement.getAttribute('data-theme'); o.disconnect(); } }).observe(document, { childList: true, subtree: true }); });
-  await pg.goto(HTML); await pg.waitForTimeout(300);
+  // Record data-theme the moment <body> appears (after the <head> bootstrap, before first paint).
+  // Observe first, then read: a late observer is the only race, and DOMContentLoaded would be too late
+  // to prove the bootstrap ran before first paint (the main script may already have called applyTheme).
+  await ctx.addInitScript(() => {
+    const rec = () => { if (document.body && window.__themeAtBody === undefined) window.__themeAtBody = document.documentElement.getAttribute('data-theme'); };
+    new MutationObserver((m, o) => { if (document.body) { rec(); o.disconnect(); } }).observe(document.documentElement || document, { childList: true, subtree: true });
+    rec();
+  });
+  const ready = () => pg.waitForFunction(() => window.__sz && window.__themeAtBody !== undefined && document.documentElement.getAttribute('data-theme'), { timeout: 8000 });
+  await pg.goto(HTML, { waitUntil: 'domcontentloaded' }); await ready();
   const st = () => pg.evaluate(() => window.__sz.theme());
   // a pixel inside the closed root card's left padding, read synchronously right after the click
   const clickAndSample = () => pg.evaluate(() => { document.getElementById('themeBtn').click(); const c = document.getElementById('c'); const r = window.__sz.rect('system'), k = c.width / innerWidth; const d = c.getContext('2d').getImageData(Math.round((r.sx + 6) * k), Math.round((r.sy + r.sh / 2) * k), 1, 1).data; return { ...window.__sz.theme(), px: [d[0], d[1], d[2]], label: document.getElementById('themeBtn').getAttribute('aria-label') }; });
   const out = { initial: await st() };
   out.click1 = await clickAndSample();
   out.click2 = await clickAndSample();
-  out.storedBeforeReload = await pg.evaluate(() => localStorage.getItem('loupe.appearance')); await pg.waitForTimeout(200); await pg.reload(); await pg.waitForTimeout(300);
+  out.storedBeforeReload = await pg.evaluate(() => localStorage.getItem('loupe.appearance'));
+  await pg.reload({ waitUntil: 'domcontentloaded' }); await ready();
   out.afterReload = { ...(await st()), themeAtBodyCreation: await pg.evaluate(() => window.__themeAtBody) };
   await pg.emulateMedia({ colorScheme: 'light' }); await pg.waitForTimeout(100);
   out.pinnedDarkIgnoresOsLight = (await st()).resolved === 'dark';
@@ -187,6 +196,10 @@ results.appearance = await (async () => {
     && out.click3.pref === 'system' && out.click3.resolved === 'light' && out.systemFollowsOsDark.resolved === 'dark' && out.systemFollowsOsDark.px[0] < 60 && out.storedAfterSystem === null;
   await ctx.close();
   return out;
+  } catch (e) {
+    try { await ctx.close(); } catch (e2) {}
+    return { ok: false, error: String(e && e.message || e) };
+  }
 })();
 results.consoleErrors = errors;
 console.log(JSON.stringify(results, null, 2));
