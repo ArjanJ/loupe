@@ -12,22 +12,28 @@
 // then asks the LLM (cached) to label the rolled-up relationships and derive a few end-to-end flows.
 // Writes the tree back in place (idempotent): root.children += "External services", root.relations, root.rollups, root.flows.
 // LOUPE_NOLLM=1 skips uncached LLM calls (static analysis only).
-import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync, realpathSync } from 'node:fs';
-import { join, dirname, relative, resolve, posix, isAbsolute } from 'node:path';
-import { createLlm } from './llm.mjs';
+import { readFileSync, existsSync, statSync, realpathSync } from 'node:fs';
+import { join, dirname, resolve, posix } from 'node:path';
+import { createLlm, hasTrackedFiles, redactSecrets } from './llm.mjs';
+import { SafeFsError, within, checkSafePath, safeDir, safeWriteFile } from './fs-safe.mjs';
+import { SRC_EXT, SECRET_FILE } from './source.mjs';
 
 if (!process.argv[2] || !process.argv[3]) { console.error('usage: loupe relations <repoDir> <tree.json>'); process.exit(2); }
 const REPO = resolve(process.argv[2]);
 const TREE = resolve(process.argv[3]);
 const CACHE = resolve(process.env.LOUPE_CACHE || join(dirname(TREE), '.loupe-cache'));
 const NOLLM = !!process.env.LOUPE_NOLLM;
-mkdirSync(CACHE, { recursive: true });
+const IGNORE = process.env.LOUPE_IGNORE ? new RegExp(process.env.LOUPE_IGNORE) : null;
 const log = (...a) => console.error('[rel]', ...a);
+
+try {
+  checkSafePath(TREE, { withinDir: within(REPO, TREE) ? REPO : null });
+  safeDir(CACHE, { withinDir: within(REPO, CACHE) ? REPO : null });
+} catch (e) { if (e instanceof SafeFsError) { console.error(`loupe: ${e.message}`); process.exit(2); } throw e; }
 
 // Untrusted repo: only read regular files that resolve (after symlinks) inside REPO, up to MAX_BYTES.
 const REAL_REPO = realpathSync(REPO);
 const MAX_BYTES = 1024 * 1024;
-const within = (base, p) => { const r = relative(base, p); return r === '' || (!r.startsWith('..') && !isAbsolute(r)); };
 const insideRepo = (p) => { if (!within(REPO, resolve(REPO, p))) return false; try { return within(REAL_REPO, realpathSync(join(REPO, p))); } catch { return true; /* does not exist yet: nothing to read */ } };
 const isRegularFile = (p) => { try { if (!insideRepo(p)) return false; const s = statSync(join(REPO, p)); return s.isFile() && s.size <= MAX_BYTES; } catch { return false; } };
 const readRepo = (p) => (isRegularFile(p) ? readFileSync(join(REPO, p), 'utf8') : '');
@@ -53,14 +59,14 @@ const files = new Map(); // path -> { text, lines, node, pkg }
 const wsDirs = root.children.map((c) => c.path).filter((p) => p && p !== '.').sort((a, b) => b.length - a.length);
 const pkgOf = (f) => wsDirs.find((d) => f.startsWith(d + '/')) || '.';
 for (const [f, node] of Object.entries(fileMap)) {
-  if (!/\.(ts|tsx|mts|cts|mjs|cjs|js|jsx|sql|prisma)$/.test(f)) continue;
+  if (!SRC_EXT.test(f) || SECRET_FILE.test(f) || (IGNORE && IGNORE.test(f))) continue;
   const text = readRepo(f); if (!text) continue;
   files.set(f, { path: f, text, lines: text.split('\n'), node, pkg: pkgOf(f) });
 }
 function lineIndex(fi) { if (!fi.nl) { fi.nl = []; for (let i = 0; i < fi.text.length; i++) if (fi.text.charCodeAt(i) === 10) fi.nl.push(i); } return fi.nl; }
 const lineAt = (fi, idx) => { const nl = lineIndex(fi); let lo = 0, hi = nl.length; while (lo < hi) { const m = (lo + hi) >> 1; if (nl[m] < idx) lo = m + 1; else hi = m; } return lo + 1; };
-const snippet = (f, line) => (files.get(f)?.lines[line - 1] || '').trim().slice(0, 140);
-const isCommentLine = (l) => /^\s*(\/\/|\*|\/\*)/.test(l);
+const snippet = (f, line) => redactSecrets((files.get(f)?.lines[line - 1] || '').trim().slice(0, 2000)).slice(0, 140);
+const isCommentLine = (l) => /^\s*(\/\/|\*|\/\*|#)/.test(l);
 const isTest = (p) => /\.(test|spec|stories)\.|__tests__|__mocks__|test-support|\/fixtures?\//.test(p);
 
 // ---------------------------------------------------------------- relation accumulator (leaf node -> leaf node)
@@ -376,7 +382,11 @@ function rollup(depth) {
 const pkgPairs = rollup(1), modPairs = rollup(2);
 log('rollups', pkgPairs.length, 'package pairs,', modPairs.length, 'module pairs');
 
-const llm = createLlm({ cache: CACHE, log, nollm: NOLLM, onFail: 'empty' });
+const untrustedCache = !!process.env.LOUPE_UNTRUSTED_CACHE || hasTrackedFiles(REPO, CACHE);
+if (!process.env.LOUPE_UNTRUSTED_CACHE && untrustedCache) {
+  console.error(`loupe: warning: cache directory ${CACHE} has files tracked by git; ignoring cached answers.`);
+}
+const llm = createLlm({ cache: CACHE, log, nollm: NOLLM, onFail: 'empty', trustCache: !untrustedCache });
 const nodeLine = (id) => { const n = nodes.get(id); return `${id} = "${n.label}" (${n.shortDescription || ''})`; };
 const pairLine = (p) => `${p.from} -> ${p.to} | ${Object.entries(p.kinds).map(([k, v]) => `${k}×${v}`).join(', ')} | e.g. ${p.samples.slice(0, 6).join('; ')}`;
 const LABEL_RULES = `For each relationship write "label": 2-5 lowercase words saying what flows or what the caller does (e.g. "renders the scene", "reads user records", "posts alerts"), and "summary": one plain sentence, max 16 words. Be concrete, use the evidence, no marketing words. Answer with ONLY a JSON object, no prose, no code fences.`;
@@ -413,7 +423,7 @@ System: ${root.shortDescription}
 Map nodes (module level, plus external services):
 ${modIds.map(nodeLine).join('\n')}
 Detected relationships between them (from -> to | kinds | evidence; each one is real, statically detected):
-${topMod.map((p) => `${pairLine(p)}${rollups[`${p.from}|${p.to}`] ? ` | "${rollups[`${p.from}|${p.to}`].label}"` : ''}`).join('\n')}
+${topMod.map((p) => `${pairLine(p)}${rollups[`${p.from}|${p.to}`] ? ` | "${rollups[`${p.from}|${p.to}`].label}"` : ''}`).join('\n') || '(none detected statically)'}
 Some HTTP routes: ${routes.slice(0, 120).map((r) => `${r.method} ${r.path}`).join(', ') || '(none detected)'}
 
 Task: describe the 4 most important end-to-end flows a new engineer should understand (what happens when a user does the main things this system is for). Each flow is 3-7 steps; each step moves from one node to another node using the ids above, and should use a pair from the relationships list whenever one fits. Step text: max 9 words, present tense.
@@ -435,6 +445,7 @@ doc.meta.relationCount = relations.length; doc.meta.relationKinds = byKind; doc.
 let nodeCount = 0; const perLevel = [];
 (function walk(n, d) { nodeCount++; perLevel[d] = (perLevel[d] || 0) + 1; n.children.forEach((c) => walk(c, d + 1)); })(root, 0);
 doc.meta.nodeCount = nodeCount; doc.meta.nodesPerLevel = perLevel;
-writeFileSync(TREE, JSON.stringify(doc, null, 2));
+try { safeWriteFile(TREE, JSON.stringify(doc, null, 2), { withinDir: within(REPO, TREE) ? REPO : null }); }
+catch (e) { if (e instanceof SafeFsError) { console.error(`loupe: ${e.message}`); process.exit(2); } throw e; }
 log(llm.summary());
 log('wrote', TREE, JSON.stringify({ relations: relations.length, byKind, routes: routes.length, flows: flows.length, nodes: nodeCount }));

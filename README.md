@@ -1,10 +1,19 @@
 # Loupe
 
-**Zoomable architecture maps for codebases and multi-repo systems.**
+**Zoomable architecture maps for codebases and multi-repo systems — one self-contained offline HTML file.**
 
-Loupe turns a repository, or a whole system of repos, into one self-contained HTML file. You can zoom from "what is this system" down to a single file. Cards open as you zoom in: the system shows its packages, packages show their modules, and modules show their files. Each level explains itself in plain sentences. Typed connections show how the parts talk to each other: HTTP, async jobs, data, third-party APIs, webhooks and code imports. Every connection links to the line of source that proves it. Guided flows walk through the main things the system does, step by step.
+**[Live interactive demo →](https://arjanj.github.io/loupe/)**
 
 ![The Excalidraw repo in Loupe: overview](docs/screenshots/excalidraw-overview-light.png)
+
+## Quickstart
+
+```sh
+cd your-app
+npx @arjanj/loupe
+```
+
+That scans your repository, groups files into modules, writes plain-English descriptions, traces typed connections and end-to-end flows, renders `architecture.html`, and opens it in your browser.
 
 <table>
 <tr>
@@ -17,171 +26,97 @@ Loupe turns a repository, or a whole system of repos, into one self-contained HT
 </tr>
 </table>
 
-Try it: open [`demo/excalidraw/excalidraw.html`](demo/excalidraw/excalidraw.html), a map of [Excalidraw](https://github.com/excalidraw/excalidraw), or [`examples/bramble/bramble.html`](examples/bramble/bramble.html), a fictional multi-repo system. Download either file and open it in a browser; it needs no server and no network.
+You can also download [`demo/excalidraw/excalidraw.html`](demo/excalidraw/excalidraw.html) ([Excalidraw](https://github.com/excalidraw/excalidraw)) or [`examples/bramble/bramble.html`](examples/bramble/bramble.html) (a fictional multi-repo system) and open either directly from disk — no server, no network.
+
+## Requirements and cost
+
+- **Runtime:** Node 18+ and `git` (run inside a git repository with at least one commit).
+- **Model:** one of [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`claude` on your `PATH`), `ANTHROPIC_API_KEY`, or `OPENAI_API_KEY`. Loupe sends source excerpts and file paths to the model you choose.
+- **Cost & caching:** model usage scales with repository size (small repos take seconds; a ~500-file monorepo takes longer on the first run). Answers are cached in `.loupe/cache/` keyed by prompt and code content, so reruns only pay for what changed.
+- **Supported languages:** TypeScript, JavaScript, Python, Go, Rust, Ruby, Java, Kotlin, Swift, PHP, C#, C/C++, Scala, Elixir, Vue, Svelte, SQL, and Prisma. Static import/HTTP/DB/queue/external detectors currently focus on JS/TS/Prisma/SQL.
 
 ## How to read a map
 
 - **Scroll or pinch** to zoom. Drag to pan. **Double-click** a card to fly into it.
-- **Hover** a card to light up what it talks to. **Click** it to open the inspector, which lists every connection with its evidence.
-- **Esc** or a breadcrumb takes you back out. The level switcher jumps straight to System, Packages, Modules or Files.
-- **Flows** plays a guided tour. **Legend** explains the line styles. The **◐** button cycles between System, Light and Dark appearance.
+- **Hover** a card to light up what it talks to. **Click** it to open the inspector with every connection and `file:line` evidence.
+- **Esc** or a breadcrumb steps back out; the level switcher jumps to System, Packages, Modules, or Files.
+- **Flows** plays a guided tour. **Legend** explains line styles. **◐** cycles System, Light, and Dark appearance.
 
-## Quickstart
+## Usage
 
-Run it inside any git repo (Node 18 or later):
-
-```sh
-cd your-app
-npx @arjanj/loupe
-```
-
-That one command scans the code, groups files into modules, writes the descriptions, finds the connections and flows, renders the map and opens it in your browser:
-
-```
-loupe · mapping /home/you/your-app
-✓ Model  Claude Code · Default
-backend: claude (Claude Code CLI, default model)
-[1/3] scanning structure + describing code …
-[2/3] finding relationships + flows …
-[3/3] rendering …
-✓ wrote architecture.html (412.6 KiB, 87 nodes) — opening in your browser
-```
-
-- **Output:** `architecture.html` in the repo root, one self-contained file.
-- **Working files:** `.loupe/` in the repo holds the tree (`.loupe/tree.json`) and the answer cache (`.loupe/cache/`). Loupe writes `.loupe/.gitignore` so none of it is committed; you can also add `.loupe/` to your own `.gitignore`. Answers are keyed by prompt, and prompts include the code, so a rerun only pays for what changed.
-- **Model:** Loupe needs one of these, and (unless you pick one) uses the first it finds:
-  1. **`claude`** — [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed and signed in (the `claude` CLI on your `PATH`). Loupe runs it headless with tools disabled.
-  2. **`anthropic`** — `ANTHROPIC_API_KEY` set: the Anthropic Messages API.
-  3. **`openai`** — `OPENAI_API_KEY` set: the OpenAI Chat Completions API.
-
-  With none of them, Loupe explains the options and exits before doing any work.
-
-**Choosing the model.** In a terminal, Loupe first asks which model to use, listing only what is set up on your machine. Use ↑↓ (or j/k) and Enter; Esc cancels. It preselects your last choice for that repo (kept in `.loupe/config.json`):
-
-```
-Which model should describe your code?
-
-  Claude Code · your subscription
-  ❯ ● Default            Claude Code's own default
-    ○ Sonnet             fast, balanced
-    ○ Opus               most thorough
-    ○ Haiku              fastest
-
-  Anthropic API · ANTHROPIC_API_KEY
-    ○ claude-sonnet-5-5  $2/$10 per MTok · fast, balanced
-    ○ claude-opus-5-5    $4/$20 · thorough — current default
-    ○ claude-haiku-5-5   from $0.10/$0.50 · fastest, cheapest
-
-  ↑↓ move · enter select · esc cancel
-```
-
-It never asks in CI, when input or output isn't a terminal (or `TERM=dumb`), or when you pass `--backend`/`--model` (or set `LOUPE_BACKEND`/`LOUPE_MODEL`); then it uses the automatic choice above.
+In a terminal without `--backend`/`--model` (or `LOUPE_BACKEND`/`LOUPE_MODEL`), Loupe lets you pick from the models available on your machine and remembers your choice per repo in `.loupe/config.json`. It never prompts in CI or non-interactive shells, where it picks the first available of `claude`, `ANTHROPIC_API_KEY`, or `OPENAI_API_KEY`.
 
 ```sh
 npx @arjanj/loupe [map] [repoDir] [options]   # repoDir defaults to the current directory
-  --out <file>        write the map somewhere else (relative to the current directory)
-  --no-open           don't open the browser (also skipped when CI or LOUPE_NO_OPEN is set, or output isn't a terminal)
-  --backend <name>    claude | anthropic | openai, instead of the automatic choice
-  --model <name>      claude: an alias like sonnet, opus or haiku; API backends: a model id like claude-sonnet-5-5
+  --out <file>        write the map somewhere else (default: <repoDir>/architecture.html)
+  --no-open           don't open the browser (also off in CI, LOUPE_NO_OPEN, or non-TTY)
+  --backend <name>    claude | anthropic | openai
+  --model <name>      claude alias (sonnet, opus, haiku) or API model id
   --verbose           show every model call
 ```
 
-The first map of a mid-size monorepo (around 500 source files) takes tens of minutes.
+Loupe writes `.loupe/.gitignore` so `.loupe/` stays out of git.
 
 ### Step by step
 
-The one-command flow runs these steps. Run them yourself to control where files go, or to map a system of many repos.
+Run each stage separately to control file paths or build a multi-repo manifest map:
 
 ```sh
-git clone https://github.com/ArjanJ/loupe && cd loupe && npm install
-
-# a single repo (a monorepo with npm/yarn/pnpm workspaces, or a plain package)
-git clone --depth 1 https://github.com/you/your-app input/your-app
-node bin/loupe.mjs scan input/your-app maps/your-app.tree.json        # structure + descriptions (model)
+node bin/loupe.mjs scan input/your-app maps/your-app.tree.json        # structure + descriptions
 node bin/loupe.mjs relations input/your-app maps/your-app.tree.json   # typed connections + flows
 node bin/loupe.mjs render maps/your-app.tree.json                     # -> maps/your-app.html
 
-# a system of many repos, from a YAML manifest (no LLM needed)
+# multi-repo system from a YAML manifest (no model needed)
 node bin/loupe.mjs manifest examples/bramble/manifest.yaml
 node bin/loupe.mjs render examples/bramble/manifest.tree.json
 ```
 
-`scan` and `relations` accept `--backend` and `--model` too. Here answers are cached in `.loupe-cache/` next to the output.
+`scan` and `relations` accept `--backend` and `--model` too, caching answers in `.loupe-cache/` next to the output.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `LOUPE_BACKEND` | automatic | `claude`, `anthropic` or `openai`; same as `--backend` |
+| `LOUPE_BACKEND` | automatic | `claude`, `anthropic`, or `openai` (same as `--backend`) |
 | `ANTHROPIC_API_KEY` | unset | enables the `anthropic` backend |
 | `OPENAI_API_KEY` | unset | enables the `openai` backend |
-| `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | API base URL, for proxies and gateways |
-| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | API base URL, for proxies and OpenAI-compatible servers |
+| `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | API base URL for proxies/gateways |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | API base URL for proxies/OpenAI-compatible servers |
 | `LOUPE_CLAUDE_BIN` | `claude` | path to the Claude Code CLI |
-| `LOUPE_MODEL` | `claude`: the CLI's default; `anthropic`: `claude-opus-5-5`; `openai`: `gpt-4.1` | model to use; same as `--model` (the flag wins) |
-| `LOUPE_EFFORT` | backend default | `claude`: passed as `--effort`; `anthropic`: `output_config.effort` |
+| `LOUPE_MODEL` | `claude`: CLI default; `anthropic`: `claude-opus-5-5`; `openai`: `gpt-4.1` | model id or alias (`--model` wins) |
+| `LOUPE_EFFORT` | backend default | `low`, `medium`, `high`, `xhigh`, or `max` |
 | `LOUPE_CONCURRENCY` | `6` | parallel model calls |
-| `LOUPE_KEY_FILES` | `12` | files described per module; the rest become "+N more" |
-| `LOUPE_IGNORE` | none | regex of paths to leave out, e.g. `^(examples\|docs)/` |
-| `LOUPE_CACHE` | `map`: `<repo>/.loupe/cache`; `scan`/`relations`: `<output dir>/.loupe-cache` | answer cache |
-| `LOUPE_NOLLM` | unset | `relations` only: use cached answers, skip new LLM calls |
+| `LOUPE_KEY_FILES` | `12` | files described per module; the rest fold into `+N more` |
+| `LOUPE_IGNORE` | none | regex of paths to skip (e.g. `^(examples\|docs)/`) |
+| `LOUPE_CACHE` | `map`: `<repo>/.loupe/cache`; `scan`/`relations`: `<out dir>/.loupe-cache` | answer cache directory |
+| `LOUPE_NOLLM` | unset | `relations` only: use cached answers, skip new model calls |
 | `LOUPE_NO_OPEN` | unset | never open the browser |
 | `LOUPE_VERBOSE` | unset | same as `--verbose` |
 
-API keys are only sent to their API; Loupe never prints them, and redacts them from error messages.
-
 ## What Loupe detects
 
-`loupe relations` reads the code statically; no LLM is involved in finding connections.
+`loupe relations` analyses code statically before asking the model to label rolled-up links and propose end-to-end flows:
 
-- **Code:** runtime imports between files, including workspace packages and `@/` aliases. Type-only imports are skipped.
-- **HTTP:** Express, Fastify, Hono and Koa-style routes, plus Next.js route handlers and `pages/api`. These are matched to the `fetch`/`axios`/`ky` calls that hit them.
-- **Data:** Prisma model reads and writes, and Drizzle table access.
-- **Async:** BullMQ, pg-boss and Inngest producers and consumers, paired by queue or event name. Also web workers.
-- **External:** well-known SDKs (GitHub, Stripe, Slack, OpenAI, Anthropic, AWS, Google Cloud, Firebase, Supabase, Sentry and more), literal API hosts, and backends configured by `*_URL` environment variables.
-- **Webhooks:** routes under `/webhook(s)`.
-
-The model then labels the rolled-up connections ("renders the scene") and proposes a few end-to-end flows. Loupe checks each flow step against the connections it detected.
+- **Code:** runtime imports across files, workspace packages, and `@/` aliases (skipping type-only imports).
+- **HTTP:** Express, Fastify, Hono, Koa, and Next.js routes matched to `fetch`/`axios`/`ky` callers.
+- **Data:** Prisma model reads/writes and Drizzle table access.
+- **Async:** BullMQ, pg-boss, Inngest, pub/sub, and web workers.
+- **External & webhooks:** common SDKs (GitHub, Stripe, Slack, OpenAI, Anthropic, AWS, GCP, Firebase, Supabase, Sentry, etc.), literal API hosts, `*_URL` backends, and `/webhook(s)` routes.
 
 ## Multi-repo systems
 
-When a system spans many repos, describe it in a [system manifest](docs/manifest.md): services, datastores, external systems, shared libraries, the calls between them, and flows. Each item can carry a lifecycle status (built, branch, proposed, planned) and a confidence level. The map draws work that isn't built yet as ghosted, dashed cards and edges, and tags inferred facts. A service can also drill down into a full per-repo map. See [`examples/bramble/manifest.yaml`](examples/bramble/manifest.yaml).
+Describe systems spanning multiple repositories in a [system manifest](docs/manifest.md): services, datastores, external systems, shared libraries, calls, flows, lifecycle status (`built`, `branch`, `proposed`, `planned`), and optional per-repo drill-down trees. See [`examples/bramble/manifest.yaml`](examples/bramble/manifest.yaml).
 
-## Privacy
+## Security & privacy
 
-Everything runs on your machine except the model. `scan` and `relations` send source excerpts and file paths to the backend you use (Claude through your Claude Code CLI, or the Anthropic or OpenAI API); nothing else leaves your machine. A rendered map embeds file paths, short code snippets as evidence, and the generated descriptions. Treat a map of a private repo as private: `input/`, `.loupe/`, `.loupe-cache/` and `private/` are gitignored here for that reason.
+- **Your model only:** nothing leaves your machine except source excerpts and paths sent to the backend you configured. When using the `claude` backend, Loupe runs it headless in an empty temp directory with tools, MCP servers, and customizations disabled (`--tools ""`, `--strict-mcp-config`, and `--safe-mode` when supported). API keys are never logged and are redacted from errors.
+- **Best-effort secret protection:** Loupe skips untracked files, ignores common secret filenames (`.env*`, `*secret*`, `*credential*`, `*.pem`, `private_key`), and redacts URL credentials, query strings, Slack webhooks, and common token patterns from evidence snippets. Still, rendered maps embed file paths, short code snippets, and generated descriptions — **treat a map of a private repository as private**.
+- **Offline viewer with CSP:** every rendered HTML map embeds its own fonts and enforces a strict Content Security Policy (`default-src 'none'` with SHA-256 script hashes) so it makes zero network requests.
 
-## Repository layout
+To report a security issue, see [SECURITY.md](SECURITY.md).
 
-| Path | What |
-| --- | --- |
-| `bin/loupe.mjs` | the CLI: `map` (the default), `scan`, `relations`, `manifest`, `render` |
-| `src/` | one-command flow, model backends, generator, relationship analysis, manifest converter, renderer |
-| `viewer/template.html` | the viewer: vanilla Canvas 2D, no dependencies |
-| `viewer/fonts/` | Inter and JetBrains Mono subsets (SIL OFL 1.1), embedded at render time |
-| `docs/` | [manifest schema](docs/manifest.md), [tree format](docs/tree-format.md), screenshots |
-| `examples/bramble/` | a fictional multi-repo system |
-| `demo/excalidraw/` | a map of Excalidraw (MIT), generated by Loupe |
-| `test/` | the pipeline test (stub models, no network), browser acceptance checks, an escaping test, the screenshot script (need Playwright) |
+## Development & tests
 
-## Tests
-
-```sh
-npm i -D playwright && npx playwright install chromium
-node test/pipeline.mjs                                     # one-command flow against stub models (no Playwright, no network)
-npm test                                                   # pipeline + escaping + acceptance on the example
-SCHEME=dark node test/acceptance.mjs demo/excalidraw/excalidraw.html
-npm run screenshots
-```
-
-## Website
-
-`site/` is a small static website with both demo maps embedded live. `npm run site` builds it into `_site/` (gitignored), copying in the demo maps, the fonts and the license files:
-
-```sh
-npm run site && python3 -m http.server -d _site 8080   # then open http://localhost:8080
-```
-
-Opening `_site/index.html` straight from disk works too, but the embedded maps then stay on their first screen. `node test/site.mjs` checks the build (it is part of `npm test`). `scripts/pages-workflow.yml` is a GitHub Pages deploy workflow, parked outside `.github/workflows/` until the site goes live; once moved there it only runs when triggered by hand.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, running the Playwright test suite (`npm test`), and PR conventions.
 
 ## License
 
-MIT © 2026 Arjan Jassal. The embedded fonts are under the SIL Open Font License. The demo is a map of Excalidraw, which is MIT licensed; it is not affiliated with that project. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+MIT © 2026 Arjan Jassal. Embedded fonts are under the SIL Open Font License 1.1. The Excalidraw demo is generated from [Excalidraw](https://github.com/excalidraw/excalidraw) (MIT) and is not affiliated with that project. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
