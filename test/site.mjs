@@ -85,12 +85,18 @@ const checkMapRendered = async (frame, label) => {
   check(info.canvasW > 0 && info.canvasH > 0, `${label}: canvas has zero size (${info.canvasW}x${info.canvasH})`);
   check(info.visCount >= 3, `${label}: expected >= 3 visible cards inside viewport, got ${info.visCount} (inner=${info.inner.join('x')}, cam=${JSON.stringify(info.cam)})`);
 };
+// wait for finite CSS animations/transitions to settle (ignore infinite ambient background animations)
+const waitAnims = (target) => target.evaluate(() => Promise.all(
+  document.getAnimations()
+    .filter((a) => Number.isFinite(a.effect?.getComputedTiming?.().endTime))
+    .map((a) => a.finished.catch(() => {}))
+));
 // verify the inspector's Close button centre (mapped through --s) is hit-testable on the iframe, not covered by the Full screen pill
 const checkInspectorCloseClear = async (page, frame, label) => {
   const synced = await page.waitForFunction(() => document.getElementById('stage')?.classList.contains('has-inspector'), null, { timeout: 3000 }).then(() => true, () => false);
   check(synced, `${label}: stage did not receive has-inspector class`);
-  await page.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished.catch(() => {}))));
-  await frame.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished.catch(() => {}))));
+  await waitAnims(page);
+  await waitAnims(frame);
   const closeCenter = await frame.evaluate(() => {
     const btn = document.querySelector('#insp .close');
     if (!btn) return null;
@@ -132,7 +138,7 @@ try {
     check(await page.evaluate(() => matchMedia('(prefers-color-scheme: dark)').matches) === (colorScheme === 'dark'), `${colorScheme}: scheme not applied`);
 
     // wait for subtle entrance animations to settle before measuring hero geometry
-    await page.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished.catch(() => {}))));
+    await waitAnims(page);
 
     // desktop hero: 16:10 laptop-shaped frame starting in the upper viewport, visible share >= 40%, veil-free, controls overlaid inside frame
     const hero = await page.evaluate(() => {
@@ -246,6 +252,8 @@ try {
     check(geom.top <= 400, `1280px: frame starts at y=${geom.top}px (expected <= 400px)`);
     check(Math.abs(geom.aspect - 1.6) <= 0.05, `1280px: frame aspect ratio is ${geom.aspect.toFixed(3)} (${geom.w}x${geom.h}, expected 1.6 ±0.05)`);
     check(geom.ratio >= 0.40, `1280px: frame covers only ${(geom.ratio * 100).toFixed(1)}% of first viewport (expected >= 40%)`);
+    const washAnim = await page.evaluate(() => getComputedStyle(document.querySelector('.bg-wash'), '::before').animationName);
+    check(washAnim === 'none', `1280px reduced-motion: wash animation should be none, got ${washAnim}`);
     const ex = await mapReady(page, 'excalidraw');
     check(ex && await opened(ex), '1280px reduced-motion: Excalidraw did not open a level deeper');
     await checkMapRendered(ex, '1280px reduced-motion Excalidraw');
@@ -254,6 +262,34 @@ try {
     check(br && await opened(br), '1280px reduced-motion: Bramble did not open a level deeper');
     await checkMapRendered(br, '1280px reduced-motion Bramble');
     check(!errs.length, `1280px reduced-motion: ${errs.join(' | ')}`);
+    await ctx.close();
+  }
+
+  // short laptop viewports (#19): 16:10 frame capped by viewport height so it stays <= vh - 64 with controls inside
+  for (const [vw, vh] of [[1280, 720], [1366, 768]]) {
+    const ctx = await browser.newContext({ viewport: { width: vw, height: vh }, reducedMotion: 'reduce' });
+    const page = await ctx.newPage();
+    const errs = [];
+    page.on('pageerror', (e) => errs.push(e.message));
+    page.on('console', (m) => m.type() === 'error' && errs.push(m.text()));
+    await page.goto(BASE, { waitUntil: 'domcontentloaded' });
+    await page.evaluate(() => document.fonts.ready);
+    const geom = await page.evaluate(() => {
+      const fr = document.querySelector('#panel-excalidraw .frame').getBoundingClientRect();
+      const tr = document.querySelector('.tabs').getBoundingClientRect();
+      const lr = document.getElementById('full-link').getBoundingClientRect();
+      return {
+        w: fr.width,
+        h: fr.height,
+        aspect: fr.width / fr.height,
+        tabsInside: tr.top >= fr.top && tr.bottom <= fr.bottom && tr.left >= fr.left && tr.right <= fr.right,
+        fullInside: lr.top >= fr.top && lr.bottom <= fr.bottom && lr.left >= fr.left && lr.right <= fr.right,
+      };
+    });
+    check(Math.abs(geom.aspect - 1.6) <= 0.05, `${vw}x${vh}: frame aspect ratio is ${geom.aspect.toFixed(3)} (${Math.round(geom.w)}x${Math.round(geom.h)}, expected 1.6 ±0.05)`);
+    check(geom.h <= vh - 64, `${vw}x${vh}: frame height ${Math.round(geom.h)}px exceeds viewport height - 64 (${vh - 64}px)`);
+    check(geom.tabsInside && geom.fullInside, `${vw}x${vh}: overlay controls fell outside capped frame`);
+    check(!errs.length, `${vw}x${vh}: ${errs.join(' | ')}`);
     await ctx.close();
   }
 
@@ -321,7 +357,7 @@ try {
     page.on('console', (m) => m.type() === 'error' && errs.push(m.text()));
     await page.goto(BASE, { waitUntil: 'domcontentloaded' });
     await page.evaluate(() => document.fonts.ready);
-    await page.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished.catch(() => {}))));
+    await waitAnims(page);
     const ex = await mapReady(page, 'excalidraw');
     check(ex && await opened(ex), `tablet ${width}px: Excalidraw map did not open a level deeper`);
     if (ex) {
@@ -372,6 +408,8 @@ try {
   }
   const shown = (sel) => page.evaluate((s) => getComputedStyle(document.querySelector(s)).display !== 'none', sel);
   check(await shown('.hint.touch') && !(await shown('.hint.fine')), 'touch hint not shown on a touch screen');
+  const mobileWashAnim = await page.evaluate(() => getComputedStyle(document.querySelector('.bg-wash'), '::before').animationName);
+  check(mobileWashAnim === 'none', `phone: wash animation should be static (none), got ${mobileWashAnim}`);
   const fx = await mapReady(page, 'excalidraw');
   check(fx && await opened(fx), 'phone: Excalidraw map did not open a level deeper');
   if (fx) {

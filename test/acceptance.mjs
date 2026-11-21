@@ -201,6 +201,55 @@ results.appearance = await (async () => {
     return { ok: false, error: String(e && e.message || e) };
   }
 })();
+
+// 9. skewed / non-monotonic rAF clock: camera flight must keep scale and center finite and in range (#18)
+results.skewedClockFly = await (async () => {
+  let ctx;
+  try {
+    ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 });
+    await ctx.addInitScript(() => {
+      const orig = window.requestAnimationFrame.bind(window);
+      let calls = 0;
+      window.requestAnimationFrame = (cb) => orig((ts) => {
+        // Skew rAF timestamps 3 s behind performance.now() and inject a backward step to test both lazy t0 and u clamping.
+        const jitter = calls++ === 2 ? -120 : 0;
+        cb(ts - 3000 + jitter);
+      });
+    });
+    const pg = await ctx.newPage();
+    pg.on('pageerror', (e) => errors.push(e.message));
+    await pg.goto(HTML, { waitUntil: 'domcontentloaded' });
+    await pg.waitForFunction(() => !!window.__sz && window.__sz.nodes.length > 0, null, { timeout: 8000 });
+    await pg.waitForTimeout(150);
+    // Start sampling before clicking the second level in #seg so every animation frame is checked.
+    const samplePromise = pg.evaluate(() => new Promise((res) => {
+      const bad = [];
+      let samples = 0;
+      const t0 = performance.now();
+      const check = () => {
+        const c = window.__sz.camera;
+        samples++;
+        const ok = [c.x, c.y, c.scale, c.fitScale, c.maxScale].every(Number.isFinite)
+          && c.scale >= c.fitScale * 0.25 && c.scale <= c.maxScale * 1.01;
+        if (!ok) bad.push({ t: Math.round(performance.now() - t0), x: c.x, y: c.y, scale: c.scale });
+        if (performance.now() - t0 > 1200 && !window.__sz.animating) return res({ samples, bad, final: { x: c.x, y: c.y, scale: c.scale, fitScale: c.fitScale, maxScale: c.maxScale } });
+        if (performance.now() - t0 > 3500) return res({ samples, bad, timedOut: true, final: { x: c.x, y: c.y, scale: c.scale, fitScale: c.fitScale, maxScale: c.maxScale } });
+        setTimeout(check, 20);
+      };
+      setTimeout(check, 10);
+    }));
+    await pg.locator('#seg button').nth(1).click();
+    const trace = await samplePromise;
+    const f = trace.final;
+    const finalOk = [f.x, f.y, f.scale].every(Number.isFinite) && f.scale >= f.fitScale * 0.5 && f.scale <= f.maxScale * 1.01;
+    const ok = !trace.timedOut && trace.bad.length === 0 && finalOk && trace.samples >= 10;
+    await ctx.close();
+    return { ok, samples: trace.samples, badCount: trace.bad.length, timedOut: !!trace.timedOut, finalScale: Number.isFinite(f.scale) ? +f.scale.toFixed(4) : String(f.scale) };
+  } catch (e) {
+    try { await ctx?.close(); } catch (e2) {}
+    return { ok: false, error: String(e && e.message || e) };
+  }
+})();
 results.consoleErrors = errors;
 console.log(JSON.stringify(results, null, 2));
 // exit non-zero on any explicit failure: an `ok: false`, a text violation, or a console error
