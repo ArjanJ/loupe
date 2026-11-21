@@ -267,10 +267,14 @@
   });
   for (const frame of document.querySelectorAll('.frame')) fit.observe(frame);
 
-  // Subtle nav hairline transition on scroll.
+  // Subtle nav frost & hairline transition on scroll (seamless over the wash at y=0).
   const nav = document.getElementById('nav');
   if (nav) {
-    const syncNav = () => nav.classList.toggle('scrolled', scrollY > 4);
+    const syncNav = () => {
+      const top = scrollY <= 4;
+      nav.classList.toggle('at-top', top);
+      nav.classList.toggle('scrolled', !top);
+    };
     syncNav();
     addEventListener('scroll', syncNav, { passive: true });
   }
