@@ -3,6 +3,15 @@
   const live = document.getElementById('live');
   const announce = (msg) => { live.textContent = ''; setTimeout(() => { live.textContent = msg; }, 30); };
 
+  // Promote entrance animation layers only while animating.
+  const calm = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (!calm) {
+    for (const el of document.querySelectorAll('.hero-in, .stage-wrap')) {
+      el.classList.add('will-anim');
+      el.addEventListener('animationend', () => el.classList.remove('will-anim'), { once: true });
+    }
+  }
+
   // Copy button: Clipboard API where allowed (https, localhost), else hidden textarea + execCommand (file://, older browsers).
   async function copyText(text) {
     try { if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; } } catch { /* fall through */ }
@@ -37,6 +46,30 @@
   // Demo tabs (WAI-ARIA tabs, automatic activation): arrows, Home and End move between tabs.
   const tabs = [...document.querySelectorAll('[role="tab"]')];
   const fullLink = document.getElementById('full-link');
+  const stage = document.getElementById('stage');
+
+  // Demo maps. Same-origin only (served over http); from file:// the frames are opaque and stay as they are.
+  const isHttp = location.protocol === 'http:' || location.protocol === 'https:';
+  const viewer = (frame) => {
+    if (!isHttp) return null;
+    try {
+      const w = frame.contentWindow;
+      return w && w.location.href.endsWith(frame.getAttribute('src')) && w.document.readyState === 'complete' && w.document.getElementById('seg') ? w : null;
+    } catch { return null; }
+  };
+
+  function syncInspectorState() {
+    if (!stage) return;
+    const activePanel = stage.querySelector('.panel:not([hidden]) iframe');
+    const w = activePanel ? viewer(activePanel) : null;
+    let open = false;
+    try {
+      const insp = w && w.document.getElementById('insp');
+      open = !!(insp && insp.classList.contains('on'));
+    } catch { /* same-origin guard */ }
+    stage.classList.toggle('has-inspector', open);
+  }
+
   function select(tab, focus) {
     for (const t of tabs) {
       const on = t === tab;
@@ -45,6 +78,7 @@
       document.getElementById(t.getAttribute('aria-controls')).hidden = !on;
     }
     if (fullLink && tab.dataset.href) fullLink.setAttribute('href', tab.dataset.href);
+    syncInspectorState();
     if (focus) tab.focus();
   }
   tabs.forEach((tab, i) => {
@@ -58,20 +92,54 @@
     });
   });
 
-  // Demo maps. Same-origin only (served over http); from file:// the frames are opaque and stay as they are.
-  const calm = matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const viewer = (frame) => {
+  // Refine embedded viewer surface via CSSOM: match frame backdrop and calm the dot grid.
+  const styledFrames = new WeakSet();
+  function styleViewerSurface(frame) {
+    const w = viewer(frame);
+    if (!w) return;
     try {
-      const w = frame.contentWindow;
-      return w && w.location.href.endsWith(frame.getAttribute('src')) && w.document.readyState === 'complete' && w.document.getElementById('seg') ? w : null;
-    } catch { return null; }
-  };
+      const doc = w.document;
+      const root = doc.documentElement;
+      const apply = () => {
+        const dark = root.getAttribute('data-theme') === 'dark';
+        const bg = dark ? '#141416' : '#fbfbfd';
+        const grad = dark
+          ? 'linear-gradient(180deg, #19191c 0%, #121214 100%)'
+          : 'linear-gradient(180deg, #ffffff 0%, #f8f8fa 100%)';
+        root.style.setProperty('--bg', bg);
+        root.style.background = bg;
+        if (doc.body) {
+          doc.body.style.background = bg;
+          doc.body.style.backgroundImage = grad;
+        }
+        // Calm the viewer's Freeform dot grid so the product frame feels crisp and quiet.
+        for (const id of ['grid0', 'grid1']) {
+          const g = doc.getElementById(id);
+          if (g) g.style.visibility = 'hidden';
+        }
+      };
+      apply();
+      if (!styledFrames.has(frame)) {
+        styledFrames.add(frame);
+        const mo = new MutationObserver(() => apply());
+        mo.observe(root, { attributes: true, attributeFilter: ['data-theme'] });
+        const insp = doc.getElementById('insp');
+        if (insp) {
+          const imo = new MutationObserver(() => syncInspectorState());
+          imo.observe(insp, { attributes: true, attributeFilter: ['class'] });
+        }
+      }
+    } catch { /* same-origin guard */ }
+  }
+
   // Open one level deeper than the viewer's first screen (one closed card), using the viewer's own level switcher.
   // Only once, only while the visitor hasn't moved the map yet, and without focusing anything or scrolling the page.
   const initCam = new WeakMap();
   function watch(frame) {
     const w = viewer(frame);
-    if (!w || initCam.has(frame)) return;
+    if (!w) return;
+    styleViewerSurface(frame);
+    if (initCam.has(frame)) return;
     try {
       const c = w.__sz && w.__sz.camera;
       if (c && c.fitScale) initCam.set(frame, { x: c.x, y: c.y, rel: c.scale / c.fitScale });

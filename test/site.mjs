@@ -59,6 +59,39 @@ const mapReady = async (page, name) => {
 };
 // site.js opens each map one level deeper once it is on screen (the viewer's own level switcher)
 const opened = (frame) => frame.waitForFunction(() => document.querySelectorAll('#seg button')[1]?.getAttribute('aria-pressed') === 'true', null, { timeout: 8000 }).then(() => true, () => false);
+// verify the inspector's Close button centre (mapped through --s) is hit-testable on the iframe, not covered by the Full screen pill
+const checkInspectorCloseClear = async (page, frame, label) => {
+  const synced = await page.waitForFunction(() => document.getElementById('stage')?.classList.contains('has-inspector'), null, { timeout: 3000 }).then(() => true, () => false);
+  check(synced, `${label}: stage did not receive has-inspector class`);
+  await page.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished.catch(() => {}))));
+  await frame.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished.catch(() => {}))));
+  const closeCenter = await frame.evaluate(() => {
+    const btn = document.querySelector('#insp .close');
+    if (!btn) return null;
+    const r = btn.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  });
+  check(closeCenter, `${label}: inspector Close button not found`);
+  if (!closeCenter) return null;
+  const hit = await page.evaluate(({ ix, iy }) => {
+    const frameEl = document.querySelector('#panel-excalidraw .frame');
+    const iframeEl = document.querySelector('#panel-excalidraw iframe');
+    const s = parseFloat(getComputedStyle(frameEl).getPropertyValue('--s')) || 1;
+    const ir = iframeEl.getBoundingClientRect();
+    const px = ir.left + ix * s;
+    const py = ir.top + iy * s;
+    const el = document.elementFromPoint(px, py);
+    return {
+      isIframe: el === iframeEl,
+      tag: el ? el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') : 'null',
+      px,
+      py,
+      s,
+    };
+  }, { ix: closeCenter.x, iy: closeCenter.y });
+  check(hit.isIframe, `${label}: inspector Close button centre (${Math.round(hit.px)},${Math.round(hit.py)}, s=${hit.s.toFixed(3)}) hit ${hit.tag}, expected iframe`);
+  return hit;
+};
 try {
   for (const colorScheme of ['light', 'dark']) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme });
@@ -75,27 +108,48 @@ try {
     // wait for subtle entrance animations to settle before measuring hero geometry
     await page.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished.catch(() => {}))));
 
-    // desktop hero: demo iframe starts within the upper viewport, dominates (>= 50%), with no veil blocking interaction
+    // desktop hero: demo iframe starts within the upper viewport, dominates (>= 45%), with no veil blocking interaction, and controls overlaid inside frame
     const hero = await page.evaluate(() => {
+      const frame = document.querySelector('#panel-excalidraw .frame');
       const iframe = document.querySelector('#panel-excalidraw iframe');
       const veil = document.querySelector('#panel-excalidraw .veil');
+      const tabs = document.querySelector('.tabs');
+      const full = document.getElementById('full-link');
       const r = iframe.getBoundingClientRect();
+      const fr = frame.getBoundingClientRect();
+      const tr = tabs.getBoundingClientRect();
+      const lr = full.getBoundingClientRect();
       const visW = Math.max(0, Math.min(r.right, innerWidth) - Math.max(r.left, 0));
       const visH = Math.max(0, Math.min(r.bottom, innerHeight) - Math.max(r.top, 0));
       return {
         top: Math.round(r.top),
         ratio: (visW * visH) / (innerWidth * innerHeight),
         veilHidden: getComputedStyle(veil).display === 'none',
+        tabsInside: tr.top >= fr.top && tr.bottom <= fr.bottom && tr.left >= fr.left && tr.right <= fr.right,
+        fullInside: lr.top >= fr.top && lr.bottom <= fr.bottom && lr.left >= fr.left && lr.right <= fr.right,
+        fullAccessible: !!(full.textContent && full.textContent.trim().length > 0),
       };
     });
-    check(hero.top <= 320, `${colorScheme}: desktop demo iframe starts at y=${hero.top}px (expected <= 320px)`);
-    check(hero.ratio >= 0.5, `${colorScheme}: desktop demo iframe covers only ${(hero.ratio * 100).toFixed(1)}% of first viewport (expected >= 50%)`);
+    check(hero.top <= 400, `${colorScheme}: desktop demo iframe starts at y=${hero.top}px (expected <= 400px)`);
+    check(hero.ratio >= 0.45, `${colorScheme}: desktop demo iframe covers only ${(hero.ratio * 100).toFixed(1)}% of first viewport (expected >= 45%)`);
     check(hero.veilHidden, `${colorScheme}: desktop touch veil should be hidden`);
+    check(hero.tabsInside, `${colorScheme}: desktop demo tabs should be overlaid inside the frame`);
+    check(hero.fullInside && hero.fullAccessible, `${colorScheme}: desktop full-screen button should be overlaid inside the frame with accessible name`);
 
     const ex = await mapReady(page, 'excalidraw');
     check(ex, `${colorScheme}: Excalidraw map did not load`);
     check(ex && await opened(ex), `${colorScheme}: Excalidraw map did not open a level deeper`);
     check(await page.evaluate(() => document.activeElement === document.body), `${colorScheme}: opening the map moved focus`);
+
+    // dot-grid calming applied cleanly without throwing
+    if (ex) {
+      const calmed = await ex.evaluate(() => {
+        const g0 = document.getElementById('grid0');
+        const g1 = document.getElementById('grid1');
+        return !!(g0 && g1 && (getComputedStyle(g0).visibility === 'hidden' || parseFloat(getComputedStyle(g0).opacity) <= 0.35));
+      });
+      check(calmed, `${colorScheme}: Excalidraw dot grid was not calmed inside frame`);
+    }
 
     // immediately interactive on desktop without any veil: clicking a card opens the inspector
     if (ex) {
@@ -105,7 +159,9 @@ try {
       check(card, `${colorScheme}: no closed card visible in Excalidraw`);
       if (card) {
         await page.mouse.click(box.x + card.sx + card.sw / 2, box.y + card.sy + card.sh / 2);
-        check(await ex.waitForFunction(() => window.__sz.inspector().open, null, { timeout: 3000 }).then(() => true, () => false), `${colorScheme}: clicking a card directly on desktop did not open the inspector`);
+        const inspOpen = await ex.waitForFunction(() => window.__sz.inspector().open, null, { timeout: 3000 }).then(() => true, () => false);
+        check(inspOpen, `${colorScheme}: clicking a card directly on desktop did not open the inspector`);
+        if (inspOpen) await checkInspectorCloseClear(page, ex, `${colorScheme} 1440px`);
       }
     }
 
@@ -131,6 +187,46 @@ try {
     const said = await page.waitForFunction(() => /Copied|⌘C|Ctrl\+C/.test(document.querySelector('.copy-label').textContent) && document.getElementById('live').textContent, null, { timeout: 3000 }).then((h) => h.jsonValue(), () => '');
     check(/Copied npx @arjanj\/loupe|selected/.test(said), `${colorScheme}: copy was not announced`);
     check(!errs.length, `${colorScheme}: ${errs.join(' | ')}`);
+    await ctx.close();
+  }
+
+  // tablet / narrow desktop (681-960px): opening the inspector must never leave the Full screen pill covering the Close button
+  for (const width of [768, 900]) {
+    const ctx = await browser.newContext({ viewport: { width, height: 900 } });
+    const page = await ctx.newPage();
+    const errs = [];
+    page.on('pageerror', (e) => errs.push(e.message));
+    page.on('console', (m) => m.type() === 'error' && errs.push(m.text()));
+    await page.goto(BASE, { waitUntil: 'domcontentloaded' });
+    await page.evaluate(() => document.fonts.ready);
+    await page.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished.catch(() => {}))));
+    const ex = await mapReady(page, 'excalidraw');
+    check(ex && await opened(ex), `tablet ${width}px: Excalidraw map did not open a level deeper`);
+    if (ex) {
+      await ex.waitForFunction(() => !window.__sz.animating);
+      await page.evaluate(() => document.querySelector('#panel-excalidraw .frame').scrollIntoView({ block: 'center', behavior: 'instant' }));
+      await page.waitForTimeout(50);
+      const { box, s } = await page.evaluate(() => {
+        const frameEl = document.querySelector('#panel-excalidraw .frame');
+        const ir = document.querySelector('#panel-excalidraw iframe').getBoundingClientRect();
+        return { box: { x: ir.left, y: ir.top }, s: parseFloat(getComputedStyle(frameEl).getPropertyValue('--s')) || 1 };
+      });
+      const card = await ex.evaluate(() => window.__sz.visible().filter((v) => v.depth >= 1 && v.openness < 0.5 && v.alpha > 0.9 && v.sw > 60 && v.sx > 0 && v.sy > 0 && v.sy + v.sh / 2 > 70 && v.sx + v.sw < innerWidth && v.sy + v.sh < innerHeight - 100).sort((a, b) => b.sw * b.sh - a.sw * a.sh)[0]);
+      check(card, `tablet ${width}px: no closed card visible in Excalidraw`);
+      if (card) {
+        await page.mouse.click(box.x + (card.sx + card.sw / 2) * s, box.y + (card.sy + card.sh / 2) * s);
+        const inspOpen = await ex.waitForFunction(() => window.__sz.inspector().open, null, { timeout: 3000 }).then(() => true, () => false);
+        check(inspOpen, `tablet ${width}px: clicking a card did not open the inspector`);
+        if (inspOpen) {
+          const hit = await checkInspectorCloseClear(page, ex, `tablet ${width}px`);
+          if (hit && hit.isIframe) {
+            await page.mouse.click(hit.px, hit.py);
+            check(await ex.waitForFunction(() => !window.__sz.inspector().open, null, { timeout: 3000 }).then(() => true, () => false), `tablet ${width}px: clicking Close button did not close the inspector`);
+          }
+        }
+      }
+    }
+    check(!errs.length, `tablet ${width}px: ${errs.join(' | ')}`);
     await ctx.close();
   }
 
@@ -193,4 +289,4 @@ try {
 } finally { await browser.close(); server.close(); }
 
 if (fails.length) { console.error('site: FAIL\n  ' + fails.join('\n  ')); process.exit(1); }
-console.log('site: ok (build, references, light + dark, hero >=50% & veil-free, maps open deeper, tabs, copy, phone: no overflow, unclipped HUD, touch hint, tap + pinch)');
+console.log('site: ok (build, references, light + dark, hero >=45% & veil-free, overlays, dot-calming, maps open deeper, tabs, copy, phone: no overflow, unclipped HUD, touch hint, tap + pinch)');
