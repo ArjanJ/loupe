@@ -88,9 +88,10 @@ check(r.output.text.split(/\x1b\[\?25l|\r\x1b/)[1].split('\n').every((l) => l.le
   const after = ['SIGINT', 'SIGTERM', 'SIGHUP'].map((s) => process.listenerCount(s));
   check(during.every((n, i) => n === before[i] + 1) && after.every((n, i) => n === before[i]), 'signal handlers installed while asking, removed after', JSON.stringify({ before, during, after }));
   // a setRawMode that throws: rejected, nothing left installed
+  const exitBefore = process.listenerCount('exit'); // Node < 22 adds its own 'exit' listener while top-level await is pending
   const bad = harness(); bad.input.setRawMode = () => { throw new Error('no tty'); };
   let err; try { await pick(all, { ...bad, color: false }); } catch (e) { err = e; }
-  check(err?.message === 'no tty' && ['SIGINT', 'SIGTERM', 'SIGHUP'].every((s, i) => process.listenerCount(s) === before[i]) && process.listenerCount('exit') === 0, 'a raw-mode failure rejects and cleans up');
+  check(err?.message === 'no tty' && ['SIGINT', 'SIGTERM', 'SIGHUP'].every((s, i) => process.listenerCount(s) === before[i]) && process.listenerCount('exit') === exitBefore, 'a raw-mode failure rejects and cleans up');
 }
 // the real thing: a child process killed with SIGTERM mid-prompt restores the cursor before dying
 {
