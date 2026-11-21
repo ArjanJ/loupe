@@ -96,7 +96,6 @@
     }
     if (frame.dataset.zeroBoot === '1' || !cameraValid(w)) {
       delete frame.dataset.zeroBoot;
-      initCam.delete(frame);
       const root = sz.nodes && sz.nodes.find((n) => !n.parent);
       if (frame.dataset.opened && root) sz.fitNode(root.id, false);
       else sz.home(false);
@@ -202,7 +201,6 @@
 
   // Open one level deeper than the viewer's first screen (one closed card), using the viewer's own level switcher.
   // Only once, only while the visitor hasn't moved the map yet, and without focusing anything or scrolling the page.
-  const initCam = new WeakMap();
   const watchedDocs = new WeakSet();
   function watch(frame) {
     const w = viewer(frame);
@@ -220,9 +218,6 @@
         frame.dataset.zeroBoot = '1';
         return;
       }
-      if (!initCam.has(frame) && cameraValid(w)) {
-        initCam.set(frame, { x: c.x, y: c.y, rel: c.scale / c.fitScale });
-      }
     } catch { /* same-origin guard */ }
   }
   function deepen(frame) {
@@ -238,11 +233,8 @@
       w.requestAnimationFrame(() => deepen(frame));
       return;
     }
-    const c = w.__sz && w.__sz.camera, c0 = initCam.get(frame);
-    if (c && c0 && (Math.abs(c.x - c0.x) > 1 || Math.abs(c.y - c0.y) > 1 || (c.fitScale && Math.abs(c.scale / c.fitScale - c0.rel) > 1e-3))) {
-      frame.dataset.opened = '1';
-      return;
-    }
+    // Visitor interaction is caught by the pointerdown/wheel/keydown listeners in watch(), which set dataset.opened.
+    // Don't infer it from camera movement: a resize or rotation while the map boots refits the camera too.
     frame.dataset.opened = '1';
     if (seg[0].getAttribute('aria-pressed') !== 'true') return;
     const sz = w.__sz, root = sz && sz.nodes && sz.nodes.find((n) => !n.parent);
