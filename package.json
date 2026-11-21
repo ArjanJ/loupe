@@ -5,42 +5,15 @@
   "type": "module",
   "license": "MIT",
   "author": "Arjan Jassal",
-  "bin": {
-    "loupe": "bin/loupe.mjs"
-  },
-  "files": [
-    "bin/",
-    "src/",
-    "viewer/",
-    "docs/manifest.md",
-    "docs/tree-format.md",
-    "README.md",
-    "LICENSE",
-    "THIRD_PARTY_NOTICES.md"
-  ],
-  "engines": {
-    "node": ">=18"
-  },
+  "bin": { "loupe": "bin/loupe.mjs" },
+  "files": ["bin/", "src/", "viewer/", "docs/manifest.md", "docs/tree-format.md", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md"],
+  "engines": { "node": ">=18" },
   "scripts": {
     "example": "node bin/loupe.mjs manifest examples/bramble/manifest.yaml examples/bramble/bramble.tree.json --strict && node bin/loupe.mjs render examples/bramble/bramble.tree.json",
     "test": "node test/pipeline.mjs && node test/picker.mjs && node test/escaping.mjs && node test/acceptance.mjs examples/bramble/bramble.html",
     "screenshots": "node test/screenshots.mjs"
   },
-  "dependencies": {
-    "yaml": "^2.5.0"
-  },
-  "devDependencies": {
-    "playwright": "^1.48.0"
-  },
-  "keywords": [
-    "architecture",
-    "diagram",
-    "codebase",
-    "map",
-    "treemap",
-    "zoom",
-    "monorepo",
-    "microservices",
-    "claude-code"
-  ]
+  "dependencies": { "yaml": "^2.5.0" },
+  "devDependencies": { "playwright": "^1.48.0" },
+  "keywords": ["architecture", "diagram", "codebase", "map", "treemap", "zoom", "monorepo", "microservices", "claude-code"]
 }
