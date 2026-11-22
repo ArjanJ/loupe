@@ -50,7 +50,7 @@
   <section class="hero" aria-labelledby="hero-title">
     <div class="hero-in">
       <h1 id="hero-title">Zoomable architecture maps for any codebase</h1>
-      <p class="sub">Static analysis and your own model, compiled into one offline HTML file with typed links and <code>file:line</code> evidence.</p>
+      <p class="sub">Run one command in any repo and get an interactive map of how your code fits together.</p>
       <div class="hero-act">
         <div class="cmd">
           <span class="prompt" aria-hidden="true">$</span>
@@ -86,162 +86,66 @@
     </div>
   </section>
 
-  <section class="band" id="how" aria-labelledby="how-title">
-    <div class="band-in">
-      <div class="band-head">
-        <p class="kicker">01 / Pipeline</p>
-        <h2 id="how-title">Three stages, local to your machine</h2>
+  <section class="band" id="start" aria-labelledby="start-title">
+    <div class="band-in split">
+      <h2 id="start-title">Getting started</h2>
+      <div class="doc">
+        <p>You need Node 18+ and git. In the root of any git repository, run:</p>
+        <div class="code">
+          <pre><code id="start-cmd">npx @arjanj/loupe</code></pre>
+          <button class="code-copy" type="button" data-copy="start-cmd" aria-label="Copy command" title="Copy">
+            <svg class="ic-copy" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><rect x="5.25" y="5.25" width="8" height="8" rx="1.5"/><path d="M10.75 5.25v-1.5a1.5 1.5 0 0 0-1.5-1.5h-5a1.5 1.5 0 0 0-1.5 1.5v5a1.5 1.5 0 0 0 1.5 1.5h1.5"/></svg>
+            <svg class="ic-check" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M3.25 8.5 6.5 11.75 12.75 4.75"/></svg>
+            <span class="copy-label sr">Copy</span>
+          </button>
+        </div>
+        <p>The first time, Loupe asks which model to use: Claude Code, an Anthropic API key, or an OpenAI API key. It saves the choice for that repo. Only short code excerpts are sent to the model.</p>
+        <p>When it finishes, <code>architecture.html</code> opens in your browser. It's a single file that works offline, so you can commit it or share it.</p>
       </div>
-      <ol class="pipeline">
-        <li>
-          <div class="step-top">
-            <span class="step-num">01</span>
-            <code class="step-cmd">loupe scan</code>
-          </div>
-          <h3>Index structure &amp; write summaries</h3>
-          <p>Walks tracked git files, skips <code>.gitignore</code> and common secret paths, groups files into packages and modules, and asks your chosen model for plain-English summaries. Cached by prompt and content hash in <code>.loupe/cache/</code>.</p>
-        </li>
-        <li>
-          <div class="step-top">
-            <span class="step-num">02</span>
-            <code class="step-cmd">loupe relations</code>
-          </div>
-          <h3>Extract static edges &amp; flows</h3>
-          <p>Deterministic detectors trace imports, HTTP routes, database queries, queues, and third-party SDKs directly from source. Your model labels rolled-up edges and proposes guided flows, with every link anchored to <code>file:line</code>.</p>
-        </li>
-        <li>
-          <div class="step-top">
-            <span class="step-num">03</span>
-            <code class="step-cmd">loupe render</code>
-          </div>
-          <h3>Emit one self-contained HTML file</h3>
-          <p>Bundles the canvas viewer, fonts, and layout into a single <code>architecture.html</code> enforced by a strict <code>default-src 'none'</code> CSP. Open it straight from disk, commit it to docs, or attach it to a pull request.</p>
-        </li>
-      </ol>
     </div>
   </section>
 
-  <section class="band" id="traces" aria-labelledby="traces-title">
+  <section class="band" id="key" aria-labelledby="key-title">
     <div class="band-in split">
       <div class="split-lead">
-        <p class="kicker">02 / Static detectors</p>
-        <h2 id="traces-title">Grounded in source, not guesswork</h2>
-        <p class="lead-copy">Structural scanning covers 19 languages, including TypeScript, Python, Go, Rust, Ruby, Java, Kotlin, and Swift. Deep relation detectors currently focus on JS/TS, Prisma, and SQL, matching each connection type to its own line style on the map.</p>
+        <h2 id="key-title">Connection types</h2>
+        <p class="lead-copy">Click a card to see its connections and the file and line each one comes from.</p>
       </div>
-      <ul class="trace-list" aria-label="Detected connection types">
+      <ul class="trace-list" aria-label="Connection types">
         <li>
-          <span class="swatch" aria-hidden="true">
-            <svg viewBox="0 0 44 12" width="44" height="12"><line x1="2" y1="6" x2="42" y2="6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-          </span>
+          <span class="swatch" aria-hidden="true"><svg viewBox="0 0 44 12" width="44" height="12"><line x1="2" y1="6" x2="42" y2="6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>
           <span class="trace-name">Code</span>
-          <span class="trace-desc">Runtime imports across files, workspace packages, and <code>@/</code> aliases; type-only imports skipped.</span>
+          <span class="trace-desc">One module imports another.</span>
         </li>
         <li>
-          <span class="swatch" aria-hidden="true">
-            <svg viewBox="0 0 44 12" width="44" height="12"><line x1="2" y1="6" x2="42" y2="6" stroke="currentColor" stroke-width="1.8" stroke-dasharray="7 5" stroke-linecap="round"/></svg>
-          </span>
+          <span class="swatch" aria-hidden="true"><svg viewBox="0 0 44 12" width="44" height="12"><line x1="2" y1="6" x2="42" y2="6" stroke="currentColor" stroke-width="1.8" stroke-dasharray="7 5" stroke-linecap="round"/></svg></span>
           <span class="trace-name">HTTP</span>
-          <span class="trace-desc">Express, Fastify, Hono, Koa, and Next.js routes matched to <code>fetch</code>, <code>axios</code>, and <code>ky</code> callers.</span>
+          <span class="trace-desc">A client calls an API route.</span>
         </li>
         <li>
-          <span class="swatch" aria-hidden="true">
-            <svg viewBox="0 0 44 12" width="44" height="12"><line x1="2" y1="6" x2="42" y2="6" stroke="currentColor" stroke-width="1.7" stroke-dasharray="14 3.5" stroke-linecap="round"/></svg>
-          </span>
+          <span class="swatch" aria-hidden="true"><svg viewBox="0 0 44 12" width="44" height="12"><line x1="2" y1="6" x2="42" y2="6" stroke="currentColor" stroke-width="1.7" stroke-dasharray="14 3.5" stroke-linecap="round"/></svg></span>
           <span class="trace-name">Data</span>
-          <span class="trace-desc">Prisma model reads and writes, plus Drizzle table queries.</span>
+          <span class="trace-desc">Code reads or writes a database table.</span>
         </li>
         <li>
-          <span class="swatch" aria-hidden="true">
-            <svg viewBox="0 0 44 12" width="44" height="12"><line x1="2" y1="6" x2="42" y2="6" stroke="currentColor" stroke-width="2.1" stroke-dasharray="0.1 5.5" stroke-linecap="round"/></svg>
-          </span>
+          <span class="swatch" aria-hidden="true"><svg viewBox="0 0 44 12" width="44" height="12"><line x1="2" y1="6" x2="42" y2="6" stroke="currentColor" stroke-width="2.1" stroke-dasharray="0.1 5.5" stroke-linecap="round"/></svg></span>
           <span class="trace-name">Async</span>
-          <span class="trace-desc">BullMQ, pg-boss, Inngest, pub/sub channels, and web workers.</span>
+          <span class="trace-desc">Work is handed off through a queue or event.</span>
         </li>
         <li>
-          <span class="swatch" aria-hidden="true">
-            <svg viewBox="0 0 44 12" width="44" height="12"><line x1="2" y1="6" x2="42" y2="6" stroke="currentColor" stroke-width="1.8" stroke-dasharray="10 4 1.5 4" stroke-linecap="round"/></svg>
-          </span>
+          <span class="swatch" aria-hidden="true"><svg viewBox="0 0 44 12" width="44" height="12"><line x1="2" y1="6" x2="42" y2="6" stroke="currentColor" stroke-width="1.8" stroke-dasharray="10 4 1.5 4" stroke-linecap="round"/></svg></span>
           <span class="trace-name">External</span>
-          <span class="trace-desc">Stripe, GitHub, Slack, OpenAI, Anthropic, AWS, GCP, Firebase, Supabase, Sentry, literal hosts, <code>*_URL</code>, and <code>/webhook</code> routes.</span>
+          <span class="trace-desc">A call to a third-party service, like Stripe or OpenAI.</span>
         </li>
       </ul>
     </div>
   </section>
 
-  <section class="band" id="usage" aria-labelledby="usage-title">
-    <div class="band-in">
-      <div class="band-head">
-        <p class="kicker">03 / Usage</p>
-        <h2 id="usage-title">Two ways to build a map</h2>
-      </div>
-      <div class="modes">
-        <div class="mode">
-          <div class="step-top">
-            <span class="step-num">Single repository</span>
-            <code class="step-cmd">git repo → HTML</code>
-          </div>
-          <h3>Point Loupe at any codebase</h3>
-          <p>Run one command inside any git repository. Loupe prompts you to pick from the models available on your machine, remembers your choice in <code>.loupe/config.json</code>, writes <code>architecture.html</code>, and opens it in your browser.</p>
-          <div class="code-box">
-            <div class="code-head">
-              <span class="code-label">Terminal</span>
-              <button class="code-copy" type="button" data-copy="cli-snippet" aria-label="Copy CLI snippet">
-                <span class="copy-label">Copy</span>
-              </button>
-            </div>
-            <pre><code id="cli-snippet">cd your-app
-npx @arjanj/loupe
-
-<span class="tok-c"># or pass a backend / output path in scripts &amp; CI</span>
-npx @arjanj/loupe <span class="tok-k">--backend</span> claude <span class="tok-k">--model</span> sonnet <span class="tok-k">--out</span> docs/architecture.html</code></pre>
-          </div>
-        </div>
-
-        <div class="mode">
-          <div class="step-top">
-            <span class="step-num">Multi-repo system</span>
-            <code class="step-cmd">manifest.yaml → HTML</code>
-          </div>
-          <h3>Describe services across repositories</h3>
-          <p>When an architecture spans multiple repos, declare services, datastores, calls, and lifecycle status (<code>built</code>, <code>branch</code>, <code>proposed</code>, <code>planned</code>) in a YAML manifest. Renders directly with no model calls required.</p>
-          <div class="code-box">
-            <div class="code-head">
-              <span class="code-label">manifest.yaml</span>
-              <a class="code-link" href="https://github.com/ArjanJ/loupe/blob/main/docs/manifest.md" rel="noopener">Manifest schema <span aria-hidden="true">↗</span></a>
-            </div>
-            <pre><code><span class="tok-k">services:</span>
-  - <span class="tok-k">id:</span> storefront
-    <span class="tok-k">repo:</span> bramble/storefront
-    <span class="tok-k">calls:</span>
-      - { <span class="tok-k">to:</span> orders-api, <span class="tok-k">via:</span> http, <span class="tok-k">what:</span> places orders }
-  - <span class="tok-k">id:</span> mobile-app
-    <span class="tok-k">calls:</span>
-      - { <span class="tok-k">to:</span> dispatch, <span class="tok-k">via:</span> websocket, <span class="tok-k">status:</span> branch }</code></pre>
-          </div>
-        </div>
-      </div>
-
-      <dl class="specs">
-        <div>
-          <dt>Requirements &amp; models</dt>
-          <dd>Node 18+ and <code>git</code>. Works with Claude Code (<code>claude</code> on your <code>PATH</code>), <code>ANTHROPIC_API_KEY</code>, or <code>OPENAI_API_KEY</code>.</dd>
-        </div>
-        <div>
-          <dt>Incremental cache</dt>
-          <dd>Model responses are cached in <code>.loupe/cache/</code> by prompt and file content hash, so reruns only pay for files that changed.</dd>
-        </div>
-        <div>
-          <dt>Security &amp; privacy</dt>
-          <dd>Nothing leaves your machine except excerpts sent to your model. Secret files (<code>.env*</code>, <code>*.pem</code>) are skipped and tokens are redacted.</dd>
-        </div>
-      </dl>
-    </div>
-  </section>
 </main>
 
 <footer class="foot">
   <div class="foot-in">
-    <p class="attrib">The Excalidraw demo is a map of the open-source <a href="https://github.com/excalidraw/excalidraw" rel="noopener">Excalidraw</a> repository (MIT, commit <code>2c3dcc0</code>), generated by Loupe. It contains no Excalidraw source files, only file paths and short quoted evidence lines, and is not affiliated with or endorsed by Excalidraw.</p>
+    <p class="attrib">The demo is a Loupe map of the open-source <a href="https://github.com/excalidraw/excalidraw" rel="noopener">Excalidraw</a> repo (MIT, commit <code>2c3dcc0</code>). It holds file paths and short quoted lines, not source files, and isn't affiliated with Excalidraw.</p>
     <div class="foot-row">
       <p>Made by Arjan Jassal · <a href="LICENSE.txt">MIT License</a></p>
       <ul>

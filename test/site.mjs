@@ -201,6 +201,11 @@ try {
     await page.focus('[data-copy]'); await page.keyboard.press('Enter');
     const said = await page.waitForFunction(() => /Copied|⌘C|Ctrl\+C/.test(document.querySelector('.copy-label').textContent) && document.getElementById('live').textContent, null, { timeout: 3000 }).then((h) => h.jsonValue(), () => '');
     check(/Copied npx @arjanj\/loupe|selected/.test(said), `${colorScheme}: copy was not announced`);
+    // install-command copy icon in Getting started
+    await page.focus('[data-copy="start-cmd"]'); await page.keyboard.press('Enter');
+    await page.waitForFunction(() => document.querySelector('[data-copy="start-cmd"]').classList.contains('done') || /⌘C|Ctrl\+C/.test(document.querySelector('[data-copy="start-cmd"] .copy-label').textContent), null, { timeout: 3000 }).catch(() => {});
+    await page.waitForTimeout(60);
+    check(/npx @arjanj\/loupe|selected/.test(await page.evaluate(() => document.getElementById('live').textContent)), `${colorScheme}: install copy button did not copy or announce`);
     check(!errs.length, `${colorScheme}: ${errs.join(' | ')}`);
     await ctx.close();
   }

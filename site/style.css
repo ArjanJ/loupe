@@ -30,8 +30,6 @@
 
 
 
-  --code-bg: #ffffff;
-  --code-head: #f2f2ef;
 
   --canvas: #ffffff; /* the Loupe viewer's own canvas colour */
 
@@ -39,7 +37,8 @@
   --display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", system-ui, "Segoe UI", Roboto, sans-serif;
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, "JetBrains Mono", Consolas, monospace;
   --ease: cubic-bezier(.22, 1, .36, 1);
-  --stage-w: 1480px;
+  --content-w: 1060px; /* one column for header, demo, sections and footer */
+  --stage-w: calc(var(--content-w) + var(--gutter) * 2);
   --gutter: 48px;
   color-scheme: light dark;
 }
@@ -73,8 +72,6 @@
 
 
 
-    --code-bg: #141416;
-    --code-head: #1b1b1e;
 
     --canvas: #161618;
   }
@@ -283,8 +280,8 @@ h1, h2, h3, p, pre, dl, dd { margin: 0; }
    Scrolling over the map zooms it; the side gutters stay free for scrolling the page. */
 .demo {
   width: 100%;
-  --demo-w: 1060px; /* frame ≈ 16:10, the shape the map fits itself to */
-  --side: max(var(--gutter), calc((100vw - var(--demo-w)) / 2));
+  /* frame ≈ 16:10, the shape the map fits itself to, on the shared content column */
+  --side: max(var(--gutter), calc((100vw - var(--content-w)) / 2));
 }
 .stage {
   position: relative;
@@ -416,87 +413,73 @@ html.is-touch .veil svg {
   stroke-linecap: round; stroke-linejoin: round;
 }
 
-/* editorial hairline bands */
+/* sections: one hairline above each, whitespace everywhere else */
 .band {
-  margin-top: 76px;
+  margin-top: 112px;
   padding: 0 var(--gutter);
 }
 .band:last-of-type {
-  padding-bottom: 84px;
+  padding-bottom: 112px;
 }
 .band-in {
-  max-width: calc(var(--stage-w) - var(--gutter) * 2);
+  max-width: var(--content-w);
   margin: 0 auto;
-  padding-top: 40px;
+  padding-top: 48px;
   border-top: 1px solid var(--line);
 }
-.band-head {
-  margin-bottom: 32px;
-}
-.kicker {
-  font: 400 11.5px/1 var(--mono);
-  letter-spacing: .07em;
-  text-transform: uppercase;
-  color: var(--ink-3);
-  margin-bottom: 10px;
-}
 .band h2 {
-  font: 600 clamp(22px, 2.2vw, 28px)/1.18 var(--display);
+  font: 600 clamp(24px, 2.4vw, 32px)/1.15 var(--display);
   letter-spacing: -0.026em;
   color: var(--ink);
   text-wrap: balance;
 }
 
-/* 01 / Pipeline — crisp hairline-divided columns, no generic icons */
-.pipeline {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  border-top: 1px solid var(--line-subtle);
+/* Getting started — plain setup instructions */
+.doc { max-width: 620px; }
+.doc p {
+  font-size: 15px;
+  line-height: 1.65;
+  color: var(--ink-2);
 }
-.pipeline li {
-  padding: 24px 28px 8px 0;
-}
-.pipeline li + li {
-  padding-left: 28px;
-  border-left: 1px solid var(--line);
-}
-.pipeline li:last-child {
-  padding-right: 0;
-}
-.step-top {
+.doc p + p,
+.code + p { margin-top: 14px; }
+.code {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
-  margin-bottom: 16px;
+  margin-top: 14px;
+  padding: 6px 6px 6px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--surface);
 }
-.step-num {
-  font: 400 12px/1 var(--mono);
+.code pre { flex: 1; min-width: 0; overflow-x: auto; }
+.code code { font-size: 14px; }
+/* icon-only copy button; the hidden label still announces "Copied" */
+.code-copy {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
   color: var(--ink-3);
+  cursor: pointer;
+  transition: background-color .15s var(--ease), color .15s var(--ease);
 }
-.step-cmd {
-  font: 400 12px/1 var(--mono);
-  color: var(--ink-2);
-  padding: 4px 8px;
-  border-radius: 6px;
-  background: var(--surface-2);
+.code-copy:hover { background: var(--surface-2); color: var(--ink); }
+.code-copy svg {
+  fill: none; stroke: currentColor; stroke-width: 1.5;
+  stroke-linecap: round; stroke-linejoin: round;
 }
-.pipeline h3 {
-  font: 600 16.5px/1.3 var(--display);
-  letter-spacing: -0.018em;
-  color: var(--ink);
-}
-.pipeline p {
-  margin-top: 8px;
-  font-size: 14.5px;
-  line-height: 1.62;
-  color: var(--ink-2);
-}
+.code-copy .ic-check { display: none; }
+.code-copy.done { color: var(--btn-done); }
+.code-copy.done .ic-copy { display: none; }
+.code-copy.done .ic-check { display: block; }
 
-/* 02 / Static detectors — asymmetric editorial split with authentic Loupe edge swatches */
+/* Reading the map — short intro beside the connection key */
 .split {
   display: grid;
   grid-template-columns: minmax(0, 360px) minmax(0, 1fr);
@@ -538,119 +521,6 @@ html.is-touch .veil svg {
 .trace-desc {
   font-size: 14px;
   line-height: 1.55;
-  color: var(--ink-2);
-}
-
-/* 03 / Usage — hairline-divided two-mode layout + 3-column spec strip */
-.modes {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  border-top: 1px solid var(--line-subtle);
-}
-.mode {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  padding: 24px 32px 28px 0;
-}
-.mode + .mode {
-  padding-left: 32px;
-  padding-right: 0;
-  border-left: 1px solid var(--line);
-}
-.mode h3 {
-  font: 600 17px/1.3 var(--display);
-  letter-spacing: -0.018em;
-  color: var(--ink);
-}
-.mode > p {
-  margin-top: 8px;
-  font-size: 14.5px;
-  line-height: 1.62;
-  color: var(--ink-2);
-}
-.code-box {
-  margin-top: 18px;
-  border-radius: 12px;
-  border: 1px solid var(--line);
-  background: var(--code-bg);
-  overflow: hidden;
-}
-.code-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 8px 14px;
-  background: var(--code-head);
-  border-bottom: 1px solid var(--line-subtle);
-}
-.code-label {
-  font: 400 12px/1 var(--mono);
-  color: var(--ink-2);
-}
-.code-copy {
-  display: inline-flex;
-  align-items: center;
-  height: 24px;
-  padding: 0 9px;
-  border: 1px solid var(--line-strong);
-  border-radius: 6px;
-  background: var(--surface);
-  color: var(--ink);
-  font: 500 11.5px/1 var(--sans);
-  cursor: pointer;
-  transition: background-color .15s var(--ease), border-color .15s var(--ease);
-}
-.code-copy:hover { background: var(--surface-2); }
-.code-copy.done {
-  border-color: var(--btn-done);
-  background: var(--btn-done);
-  color: #ffffff;
-}
-.code-link {
-  font: 500 12px/1 var(--sans);
-  color: var(--accent);
-  white-space: nowrap;
-}
-.code-box pre {
-  padding: 14px 16px;
-  overflow-x: auto;
-  max-width: 100%;
-  font: 12.75px/1.62 var(--mono);
-  color: var(--ink);
-  tab-size: 2;
-}
-.code-box pre code {
-  font-size: inherit;
-  color: inherit;
-}
-.code-box .tok-c { color: var(--ink-3); }
-.code-box .tok-k { color: var(--ink-2); }
-
-.specs {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  border-top: 1px solid var(--line);
-}
-.specs > div {
-  padding: 22px 28px 4px 0;
-}
-.specs > div + div {
-  padding-left: 28px;
-  border-left: 1px solid var(--line);
-}
-.specs > div:last-child {
-  padding-right: 0;
-}
-.specs dt {
-  font: 600 14px/1.3 var(--sans);
-  color: var(--ink);
-}
-.specs dd {
-  margin-top: 6px;
-  font-size: 13.75px;
-  line-height: 1.58;
   color: var(--ink-2);
 }
 
@@ -703,19 +573,6 @@ html.is-touch .veil svg {
 @media (max-width: 960px) {
   :root { --gutter: 24px; }
   .split { grid-template-columns: 1fr; gap: 24px; }
-  .modes,
-  .pipeline,
-  .specs { grid-template-columns: 1fr; }
-  .mode,
-  .pipeline li,
-  .specs > div { padding: 20px 0; }
-  .mode + .mode,
-  .pipeline li + li,
-  .specs > div + div {
-    padding-left: 0;
-    border-left: 0;
-    border-top: 1px solid var(--line);
-  }
 }
 
 /* mobile */
@@ -743,16 +600,14 @@ html.is-touch .veil svg {
 
   .stage-meta { margin-top: 10px; }
 
-  .band { margin-top: 52px; }
-  .band:last-of-type { padding-bottom: 56px; }
-  .band-in { padding-top: 28px; }
-  .band-head { margin-bottom: 22px; }
-  .trace-list li {
+  .band { margin-top: 72px; }
+  .band:last-of-type { padding-bottom: 72px; }
+  .band-in { padding-top: 32px; }
+    .trace-list li {
     grid-template-columns: 44px minmax(0, 1fr);
     gap: 4px 12px;
   }
   .trace-desc { grid-column: 2; }
-  .facts > div { grid-template-columns: 74px minmax(0, 1fr); gap: 12px; }
 
   .foot { padding: 24px 0 32px; }
   .foot-row { flex-direction: column; align-items: flex-start; gap: 10px; }
