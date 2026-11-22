@@ -187,6 +187,44 @@ h1, h2, h3, p, pre, dl, dd { margin: 0; }
   will-change: transform, opacity;
 }
 .intro.zooming .zoom-grid::after { opacity: clamp(0, (var(--z) - .15) * 1.6, 1); }
+
+/* entrance: the grid spreads out from behind the headline, led by a brighter accent wavefront (::before).
+   Motion-only: with reduced motion the grid is simply there. */
+@property --ripple-r { syntax: "<length>"; inherits: true; initial-value: 0px; }
+@keyframes grid-ripple { from { --ripple-r: 0px; } to { --ripple-r: 150vmax; } }
+@media (prefers-reduced-motion: no-preference) {
+  .zoom-grid {
+    animation: grid-ripple 2.8s cubic-bezier(.3, .6, .4, 1) .15s both;
+    -webkit-mask-image: radial-gradient(circle var(--ripple-r) at 50% 34%, #000 calc(100% - 60px), transparent), radial-gradient(ellipse 78% 72% at 50% 38%, #000 35%, transparent 85%);
+    -webkit-mask-composite: source-in;
+    mask-image: radial-gradient(circle var(--ripple-r) at 50% 34%, #000 calc(100% - 60px), transparent), radial-gradient(ellipse 78% 72% at 50% 38%, #000 35%, transparent 85%);
+    mask-composite: intersect;
+  }
+  .zoom-grid::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: radial-gradient(circle, var(--accent) 1.4px, transparent 2px) center 11px / 22px 22px;
+    -webkit-mask-image: radial-gradient(circle var(--ripple-r) at 50% 34%, transparent calc(100% - 70px), #000 calc(100% - 22px), transparent);
+    mask-image: radial-gradient(circle var(--ripple-r) at 50% 34%, transparent calc(100% - 70px), #000 calc(100% - 22px), transparent);
+    opacity: .7;
+  }
+}
+
+/* spotlight: dots near the cursor brighten a little (not grow). site.js writes --mx/--my in the grid's own
+   coordinates and adds .on; fine pointers only. */
+.grid-spot {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(circle, light-dark(rgba(20, 20, 22, .3), rgba(255, 255, 255, .24)) 1px, transparent 1.5px) center 11px / 22px 22px;
+  -webkit-mask-image: radial-gradient(circle 150px at var(--mx, -999px) var(--my, -999px), #000, transparent);
+  mask-image: radial-gradient(circle 150px at var(--mx, -999px) var(--my, -999px), #000, transparent);
+  opacity: 0;
+  transition: opacity .4s var(--ease);
+}
+.grid-spot.on { opacity: 1; }
 /* only once the camera is moving (.moving), so the headline renders crisp, unlayered text at rest */
 .intro.zooming.moving .hero-in {
   transform: scale(calc(1 + var(--z) * .05));

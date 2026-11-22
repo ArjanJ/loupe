@@ -185,6 +185,24 @@
     new ResizeObserver(() => { measure(); queue(); }).observe(intro);
   }
 
+  // Grid spotlight: dots near the cursor brighten. Coordinates are in .zoom-grid's own (pre-zoom) space so the light
+  // stays under the pointer while the grid scales. Fine pointers only; skipped with reduced motion.
+  const spot = grid && grid.querySelector('.grid-spot');
+  if (spot && !calm && matchMedia('(hover: hover) and (pointer: fine)').matches) {
+    intro.addEventListener('pointermove', (e) => {
+      const r = grid.getBoundingClientRect();
+      const s = r.width / grid.offsetWidth || 1;
+      spot.style.setProperty('--mx', `${(e.clientX - r.left) / s}px`);
+      spot.style.setProperty('--my', `${(e.clientY - r.top) / s}px`);
+      spot.classList.add('on');
+    });
+    // off when leaving the hero, or when entering the map iframe (which swallows pointer events)
+    intro.addEventListener('pointerout', (e) => {
+      const to = e.relatedTarget;
+      if (!to || !intro.contains(to) || to.tagName === 'IFRAME') spot.classList.remove('on');
+    });
+  }
+
   // Nav frost transition on scroll.
   const nav = document.getElementById('nav');
   if (nav) {
