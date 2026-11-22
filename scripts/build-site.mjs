@@ -11,7 +11,6 @@ const OUT = join(ROOT, '_site');
 // [source in the repo, destination in _site]
 export const FILES = [
   ['demo/excalidraw/excalidraw.html', 'demos/excalidraw.html'],
-  ['examples/bramble/bramble.html', 'demos/bramble.html'],
   ['viewer/fonts/inter.woff', 'fonts/inter.woff'],
   ['viewer/fonts/jbmono.woff', 'fonts/jbmono.woff'],
   ['LICENSE', 'LICENSE.txt'],

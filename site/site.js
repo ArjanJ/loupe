@@ -35,11 +35,6 @@
     });
   }
 
-  // Demo tabs (WAI-ARIA tabs, automatic activation): arrows, Home and End move between tabs.
-  const tabs = [...document.querySelectorAll('[role="tab"]')];
-  const fullLink = document.getElementById('full-link');
-  const specimenMeta = document.getElementById('specimen-meta');
-  const stage = document.getElementById('stage');
 
   // Demo maps. Same-origin only (served over http); from file:// the frames are opaque and stay as they are.
   const isHttp = location.protocol === 'http:' || location.protocol === 'https:';
@@ -95,117 +90,12 @@
     }
   }
 
-  function syncInspectorState() {
-    if (!stage) return;
-    const activePanel = stage.querySelector('.panel:not([hidden]) iframe');
-    const w = activePanel ? viewer(activePanel) : null;
-    let open = false;
-    try {
-      const insp = w && w.document.getElementById('insp');
-      open = !!(insp && insp.classList.contains('on'));
-    } catch { /* same-origin guard */ }
-    stage.classList.toggle('has-inspector', open);
-  }
-
-  function activatePanel(panel) {
-    if (!panel || panel.hidden) return;
-    scaleFrame(panel.querySelector('.frame'));
-    const frame = panel.querySelector('iframe');
-    if (!frame) return;
-    if (!frame.getAttribute('src') && frame.dataset.src) {
-      frame.setAttribute('src', frame.dataset.src);
-      return;
-    }
-    requestAnimationFrame(() => {
-      if (!isFrameSized(frame)) return;
-      const w = viewer(frame);
-      if (!w) return;
-      recoverCamera(frame, w);
-      watch(frame);
-      if (!frame.dataset.opened && frame.dataset.seen) deepen(frame);
-    });
-  }
-
-  function select(tab, focus) {
-    let activePanel = null;
-    for (const t of tabs) {
-      const on = t === tab;
-      t.setAttribute('aria-selected', String(on));
-      t.tabIndex = on ? 0 : -1;
-      const panel = document.getElementById(t.getAttribute('aria-controls'));
-      panel.hidden = !on;
-      if (on) activePanel = panel;
-    }
-    if (fullLink && tab.dataset.href) fullLink.setAttribute('href', tab.dataset.href);
-    if (specimenMeta && tab.dataset.meta) specimenMeta.textContent = tab.dataset.meta;
-    activatePanel(activePanel);
-    syncInspectorState();
-    if (focus) tab.focus();
-  }
-  tabs.forEach((tab, i) => {
-    tab.addEventListener('click', () => select(tab));
-    tab.addEventListener('keydown', (e) => {
-      const n = tabs.length;
-      const to = { ArrowRight: i + 1, ArrowDown: i + 1, ArrowLeft: i - 1, ArrowUp: i - 1, Home: 0, End: n - 1 }[e.key];
-      if (to === undefined) return;
-      e.preventDefault();
-      select(tabs[(to + n) % n], true);
-    });
-  });
-
-  // In-page shortcuts to switch demo tab and scroll back to the stage.
-  for (const btn of document.querySelectorAll('[data-switch-tab]')) {
-    btn.addEventListener('click', () => {
-      const tab = document.getElementById(btn.dataset.switchTab);
-      if (!tab) return;
-      select(tab);
-      document.getElementById('demo')?.scrollIntoView({ behavior: calm ? 'auto' : 'smooth', block: 'start' });
-    });
-  }
-
-  // Match embedded viewer surface to the specimen frame and calm the dot grid.
-  const styledDocs = new WeakSet();
-  function styleViewerSurface(frame) {
-    const w = viewer(frame);
-    if (!w) return;
-    try {
-      const doc = w.document;
-      const root = doc.documentElement;
-      const apply = () => {
-        const dark = root.getAttribute('data-theme') === 'dark';
-        const bg = dark ? '#161618' : '#ffffff';
-        root.style.setProperty('--bg', bg);
-        root.style.background = bg;
-        if (doc.body) {
-          doc.body.style.background = bg;
-          doc.body.style.backgroundImage = 'none';
-        }
-        for (const id of ['grid0', 'grid1']) {
-          const g = doc.getElementById(id);
-          if (g) g.style.visibility = 'hidden';
-        }
-      };
-      apply();
-      if (!styledDocs.has(doc)) {
-        styledDocs.add(doc);
-        const mo = new MutationObserver(() => apply());
-        mo.observe(root, { attributes: true, attributeFilter: ['data-theme'] });
-        const insp = doc.getElementById('insp');
-        if (insp) {
-          const imo = new MutationObserver(() => syncInspectorState());
-          imo.observe(insp, { attributes: true, attributeFilter: ['class'] });
-        }
-      }
-    } catch { /* same-origin guard */ }
-  }
-
   // Open one level deeper than the viewer's first screen (one closed card), using the viewer's own level switcher.
   // Only once, only while the visitor hasn't moved the map yet, and without focusing anything or scrolling the page.
   const watchedDocs = new WeakSet();
   function watch(frame) {
     const w = viewer(frame);
     if (!w) return;
-    styleViewerSurface(frame);
     try {
       const doc = w.document;
       if (!watchedDocs.has(doc)) {

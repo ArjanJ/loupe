@@ -27,28 +27,20 @@
   --cmd-bg: #ffffff;
   --cmd-shadow: 0 1px 2px rgba(0, 0, 0, .04);
 
-  --seg-glass: rgba(244, 244, 241, .86);
-  --seg-on: #ffffff;
-  --seg-on-shadow: 0 1px 2px rgba(0, 0, 0, .09), 0 0 0 .5px rgba(20, 20, 22, .08);
 
-  --pill-glass: rgba(255, 255, 255, .88);
-  --pill-glass-hover: #ffffff;
 
-  --frame-bg: #ffffff;
-  --frame-ring: rgba(20, 20, 22, .12);
-  --frame-shadow:
-    0 1px 2px rgba(0, 0, 0, .04),
-    0 14px 36px -14px rgba(0, 0, 0, .10);
 
   --code-bg: #ffffff;
   --code-head: #f2f2ef;
+
+  --canvas: #ffffff; /* the Loupe viewer's own canvas colour */
 
   --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Inter", system-ui, "Segoe UI", Roboto, sans-serif;
   --display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", system-ui, "Segoe UI", Roboto, sans-serif;
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, "JetBrains Mono", Consolas, monospace;
   --ease: cubic-bezier(.22, 1, .36, 1);
-  --stage-w: 1320px;
-  --gutter: 24px;
+  --stage-w: 1480px;
+  --gutter: 48px;
   color-scheme: light dark;
 }
 
@@ -78,19 +70,13 @@
     --cmd-bg: #161618;
     --cmd-shadow: none;
 
-    --seg-glass: rgba(28, 28, 31, .86);
-    --seg-on: #3a3a40;
-    --seg-on-shadow: 0 1px 2px rgba(0, 0, 0, .4), inset 0 .5px 0 rgba(255, 255, 255, .12);
 
-    --pill-glass: rgba(28, 28, 31, .86);
-    --pill-glass-hover: rgba(44, 44, 49, .94);
 
-    --frame-bg: #161618;
-    --frame-ring: rgba(255, 255, 255, .12);
-    --frame-shadow: 0 20px 50px -20px rgba(0, 0, 0, .75);
 
     --code-bg: #141416;
     --code-head: #1b1b1e;
+
+    --canvas: #161618;
   }
 }
 
@@ -115,7 +101,7 @@ code {
   letter-spacing: 0;
   color: var(--ink);
 }
-:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 5px; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 6px; }
 h1, h2, h3, p, pre, dl, dd { margin: 0; }
 
 .sr {
@@ -185,11 +171,6 @@ h1, h2, h3, p, pre, dl, dd { margin: 0; }
   align-items: center;
   gap: 22px;
 }
-.nav-sep {
-  width: 1px;
-  height: 14px;
-  background: var(--line);
-}
 .nav-text {
   color: var(--ink-2);
   font-size: 13.5px;
@@ -202,7 +183,7 @@ h1, h2, h3, p, pre, dl, dd { margin: 0; }
 
 /* centered editorial hero — balanced over the live map stage */
 .hero {
-  padding: 34px var(--gutter) 24px;
+  padding: 72px var(--gutter) 56px;
   text-align: center;
 }
 .hero-in {
@@ -241,7 +222,7 @@ h1, h2, h3, p, pre, dl, dd { margin: 0; }
   gap: 10px;
   height: 40px;
   padding: 4px 4px 4px 14px;
-  border-radius: 8px;
+  border-radius: 12px;
   background: var(--cmd-bg);
   border: 1px solid var(--line-strong);
   box-shadow: var(--cmd-shadow);
@@ -266,7 +247,7 @@ h1, h2, h3, p, pre, dl, dd { margin: 0; }
   margin-left: 4px;
   padding: 0 11px 0 10px;
   border: 0;
-  border-radius: 5px;
+  border-radius: 8px;
   cursor: pointer;
   background: var(--btn-bg);
   color: var(--btn-ink);
@@ -298,27 +279,25 @@ h1, h2, h3, p, pre, dl, dd { margin: 0; }
 .hero-link:hover { color: var(--ink); text-decoration: underline; text-underline-offset: .22em; }
 .hero-link span { font-size: .95em; opacity: .7; }
 
-/* interactive map specimen stage */
-.demo { width: 100%; }
-.stage-wrap {
-  max-width: var(--stage-w);
-  margin: 0 auto;
-  padding: 0 var(--gutter);
+/* interactive map — a window onto a real Loupe artifact (its own canvas, dot grid and toolbar).
+   Scrolling over the map zooms it; the side gutters stay free for scrolling the page. */
+.demo {
+  width: 100%;
+  --demo-w: 1060px; /* frame ≈ 16:10, the shape the map fits itself to */
+  --side: max(var(--gutter), calc((100vw - var(--demo-w)) / 2));
 }
 .stage {
   position: relative;
-  width: min(100%, calc((100vh - 88px) * 1.6));
-  width: min(100%, calc((100svh - 88px) * 1.6));
-  margin-inline: auto;
+  width: auto;
+  margin-inline: var(--side);
 }
 .frame {
   position: relative;
   width: 100%;
-  aspect-ratio: 16 / 10;
-  border-radius: 12px;
+  height: clamp(460px, calc(100svh - 240px), 720px);
+  border-radius: 28px; /* at least as round as the map's own outer card, so the corners nest */
   overflow: hidden;
-  background: var(--frame-bg);
-  box-shadow: var(--frame-shadow);
+  background: var(--canvas);
 }
 .frame::after {
   content: "";
@@ -326,7 +305,7 @@ h1, h2, h3, p, pre, dl, dd { margin: 0; }
   inset: 0;
   z-index: 3;
   border-radius: inherit;
-  box-shadow: inset 0 0 0 1px var(--frame-ring);
+  box-shadow: inset 0 0 0 1px var(--line-subtle);
   pointer-events: none;
 }
 .frame iframe {
@@ -343,114 +322,32 @@ h1, h2, h3, p, pre, dl, dd { margin: 0; }
   transform-origin: 0 0;
 }
 
-/* overlay instrumentation inside frame — matches viewer's own segmented control geometry */
-.stage-controls {
-  position: absolute;
-  top: 12px;
-  left: 12px;
-  right: 12px;
-  z-index: 4;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  pointer-events: none;
-}
-.tabs,
-.full {
-  pointer-events: auto;
-}
-@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
-  .tabs,
-  .full {
-    -webkit-backdrop-filter: saturate(160%) blur(16px);
-    backdrop-filter: saturate(160%) blur(16px);
-  }
-}
-.tabs {
-  display: inline-flex;
-  padding: 2px;
-  border-radius: 8px;
-  background: var(--seg-glass);
-  border: 1px solid var(--line);
-}
-.tabs button {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 28px;
-  padding: 0 11px;
-  border: 0;
-  border-radius: 6px;
-  cursor: pointer;
-  background: none;
-  color: var(--ink-2);
-  font: 500 12.5px/1 var(--sans);
-  letter-spacing: -0.01em;
-  white-space: nowrap;
-  transition: background-color .18s var(--ease), color .16s var(--ease);
-}
-.tabs button:hover { color: var(--ink); }
-.tabs button[aria-selected="true"] {
-  background: var(--seg-on);
-  color: var(--ink);
-  font-weight: 600;
-  box-shadow: var(--seg-on-shadow);
-}
-.tabs button:focus-visible { outline-offset: -1px; border-radius: 6px; }
-.tab-kind {
-  font: 400 10.5px/1 var(--mono);
-  color: var(--ink-3);
-}
-.tabs button[aria-selected="true"] .tab-kind {
-  color: var(--ink-2);
-}
-
-.full {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 34px;
-  padding: 0 11px 0 10px;
-  border-radius: 8px;
-  background: var(--pill-glass);
-  border: 1px solid var(--line);
-  font: 500 12.5px/1 var(--sans);
-  letter-spacing: -0.01em;
-  color: var(--ink);
-  white-space: nowrap;
-  transition: background-color .16s var(--ease), transform .28s var(--ease), opacity .18s var(--ease), visibility .18s;
-}
-.full svg {
-  fill: none; stroke: currentColor; stroke-width: 1.7;
-  stroke-linecap: round; stroke-linejoin: round; flex: none;
-  opacity: .75;
-}
-.full:hover { text-decoration: none; background: var(--pill-glass-hover); }
-.full:hover svg { opacity: 1; }
-.full:active { transform: scale(.97); }
-.stage.has-inspector .full { transform: translateX(-356px); }
-.stage.has-inspector .full:active { transform: translateX(-356px) scale(.97); }
-
-/* caption bar under the live map */
+/* one quiet caption line under the map: source on the left, full-screen link on the right */
 .stage-meta {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   justify-content: space-between;
   gap: 6px 20px;
-  margin-top: 12px;
-  padding: 0 2px;
+  margin-top: 14px;
+  padding: 0 calc(var(--side) + 6px);
 }
-.hint {
-  font-size: 12.5px;
-  color: var(--ink-3);
-}
-.hint.touch { display: none; }
 .specimen-meta {
   font: 400 12px/1.4 var(--mono);
   color: var(--ink-3);
 }
+.full {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  font: 500 12.5px/1.4 var(--sans);
+  letter-spacing: -0.006em;
+  color: var(--ink-2);
+  white-space: nowrap;
+  transition: color .16s var(--ease);
+}
+.full:hover { color: var(--ink); text-decoration: underline; text-underline-offset: .22em; }
+.full span[aria-hidden] { font-size: .95em; opacity: .7; }
 
 /* touch veil */
 .veil { display: none; }
@@ -465,7 +362,7 @@ h1, h2, h3, p, pre, dl, dd { margin: 0; }
     border: 0;
     cursor: pointer;
     font: inherit;
-    background: linear-gradient(to bottom, transparent 58%, color-mix(in srgb, var(--frame-bg) 62%, transparent) 100%);
+    background: linear-gradient(to bottom, transparent 58%, color-mix(in srgb, var(--canvas) 62%, transparent) 100%);
     -webkit-tap-highlight-color: transparent;
   }
   .veil span {
@@ -474,7 +371,7 @@ h1, h2, h3, p, pre, dl, dd { margin: 0; }
     gap: 7px;
     height: 36px;
     padding: 0 15px;
-    border-radius: 8px;
+    border-radius: 999px;
     background: var(--btn-bg);
     color: var(--btn-ink);
     font-size: 13.5px;
@@ -486,8 +383,6 @@ h1, h2, h3, p, pre, dl, dd { margin: 0; }
     fill: none; stroke: currentColor; stroke-width: 1.55;
     stroke-linecap: round; stroke-linejoin: round;
   }
-  .hint.fine { display: none; }
-  .hint.touch { display: block; }
 }
 html.is-touch .veil {
   display: grid;
@@ -499,7 +394,7 @@ html.is-touch .veil {
   border: 0;
   cursor: pointer;
   font: inherit;
-  background: linear-gradient(to bottom, transparent 58%, color-mix(in srgb, var(--frame-bg) 62%, transparent) 100%);
+  background: linear-gradient(to bottom, transparent 58%, color-mix(in srgb, var(--canvas) 62%, transparent) 100%);
   -webkit-tap-highlight-color: transparent;
 }
 html.is-touch .veil span {
@@ -508,7 +403,7 @@ html.is-touch .veil span {
   gap: 7px;
   height: 36px;
   padding: 0 15px;
-  border-radius: 8px;
+  border-radius: 999px;
   background: var(--btn-bg);
   color: var(--btn-ink);
   font-size: 13.5px;
@@ -520,8 +415,6 @@ html.is-touch .veil svg {
   fill: none; stroke: currentColor; stroke-width: 1.55;
   stroke-linecap: round; stroke-linejoin: round;
 }
-html.is-touch .hint.fine { display: none; }
-html.is-touch .hint.touch { display: block; }
 
 /* editorial hairline bands */
 .band {
@@ -588,7 +481,7 @@ html.is-touch .hint.touch { display: block; }
   font: 400 12px/1 var(--mono);
   color: var(--ink-2);
   padding: 4px 8px;
-  border-radius: 5px;
+  border-radius: 6px;
   background: var(--surface-2);
 }
 .pipeline h3 {
@@ -678,7 +571,7 @@ html.is-touch .hint.touch { display: block; }
 }
 .code-box {
   margin-top: 18px;
-  border-radius: 8px;
+  border-radius: 12px;
   border: 1px solid var(--line);
   background: var(--code-bg);
   overflow: hidden;
@@ -702,7 +595,7 @@ html.is-touch .hint.touch { display: block; }
   height: 24px;
   padding: 0 9px;
   border: 1px solid var(--line-strong);
-  border-radius: 5px;
+  border-radius: 6px;
   background: var(--surface);
   color: var(--ink);
   font: 500 11.5px/1 var(--sans);
@@ -734,24 +627,6 @@ html.is-touch .hint.touch { display: block; }
 }
 .code-box .tok-c { color: var(--ink-3); }
 .code-box .tok-k { color: var(--ink-2); }
-
-.mode-links {
-  margin-top: 14px;
-}
-.text-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 7px 12px;
-  border-radius: 6px;
-  border: 1px solid var(--line-strong);
-  background: var(--surface);
-  color: var(--ink);
-  font: 500 12.5px/1 var(--sans);
-  cursor: pointer;
-  transition: background-color .15s var(--ease), border-color .15s var(--ease);
-}
-.text-btn:hover { background: var(--surface-2); }
 
 .specs {
   display: grid;
@@ -826,6 +701,7 @@ html.is-touch .hint.touch { display: block; }
 
 /* tablet */
 @media (max-width: 960px) {
+  :root { --gutter: 24px; }
   .split { grid-template-columns: 1fr; gap: 24px; }
   .modes,
   .pipeline,
@@ -840,23 +716,16 @@ html.is-touch .hint.touch { display: block; }
     border-left: 0;
     border-top: 1px solid var(--line);
   }
-  .stage.has-inspector .full {
-    transform: none;
-    opacity: 0;
-    visibility: hidden;
-    pointer-events: none;
-  }
-  .stage.has-inspector .full:active { transform: none; }
 }
 
 /* mobile */
 @media (max-width: 680px) {
   :root { --gutter: 16px; }
   .nav-in { height: 48px; }
-  .brand-meta, .nav-sec, .nav-sep { display: none; }
+  .brand-meta { display: none; }
   .nav-links { gap: 16px; }
 
-  .hero { padding: 24px var(--gutter) 20px; }
+  .hero { padding: 44px var(--gutter) 36px; }
   .hero h1 { font-size: clamp(28px, 8.2vw, 36px); line-height: 1.09; letter-spacing: -0.032em; }
   .sub { margin-top: 12px; font-size: 15px; }
   .hero-act { margin-top: 16px; gap: 10px 16px; flex-direction: column; }
@@ -865,36 +734,14 @@ html.is-touch .hint.touch { display: block; }
   .copy { height: 28px; min-width: 66px; margin-left: 2px; padding: 0 9px; font-size: 12px; }
   .hero-link { font-size: 13.5px; }
 
-  .stage { width: 100%; }
+  .demo { --side: var(--gutter); }
   .frame {
-    width: 100%;
     height: auto;
     aspect-ratio: 1.28 / 1;
-    min-height: 0;
-    border-radius: 10px;
+    border-radius: 18px;
   }
 
-  /* controls sit cleanly below the frame on mobile for thumb reach and zero map occlusion */
-  .stage-controls {
-    position: static;
-    margin-top: 12px;
-    pointer-events: auto;
-  }
-  .tabs, .full {
-    background: var(--surface);
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
-  }
-  .stage.has-inspector .full {
-    opacity: 1;
-    visibility: visible;
-    pointer-events: auto;
-  }
-  .stage.has-inspector .full:active { transform: scale(.97); }
-  .tab-kind { display: none; }
-  .tabs button { height: 30px; padding: 0 12px; font-size: 13px; }
-  .full { height: 36px; padding: 0 12px 0 10px; font-size: 13px; }
-  .stage-meta { margin-top: 10px; flex-direction: column; gap: 4px; }
+  .stage-meta { margin-top: 10px; }
 
   .band { margin-top: 52px; }
   .band:last-of-type { padding-bottom: 56px; }
@@ -916,7 +763,6 @@ html.is-touch .hint.touch { display: block; }
   .cmd { padding: 3px 3px 3px 9px; gap: 6px; }
   .cmd code, .cmd .prompt { font-size: 12px; }
   .copy { min-width: 58px; margin-left: 0; padding: 0 8px; font-size: 11.5px; }
-  .stage-controls { flex-wrap: wrap; justify-content: space-between; gap: 8px; }
   html.is-touch .veil { padding-bottom: 28px; }
   html.is-touch .veil span { height: 32px; padding: 0 12px; font-size: 12.5px; }
 }
