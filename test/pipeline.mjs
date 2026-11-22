@@ -508,6 +508,78 @@ try {
     check(r.code === 0 && polyTree?.root?.children?.[0]?.packageName === 'polyglot-app' && polyText.includes('class Signer') && polyText.includes('StartServer()') && polyText.includes('struct Token') && cppObjcOk, 'languages: multi-language repo maps Python/Go/Rust/C++/Objective-C + extracts exports', polyText.slice(0, 1500));
   }
 
+  // ---------- Python + Go import relations ----------
+  {
+    const pg = join(TMP, 'py-go-imports');
+    const write = (rel, content) => { const full = join(pg, rel); mkdirSync(dirname(full), { recursive: true }); writeFileSync(full, content); };
+    write('src/shop/__init__.py', '');
+    write('src/shop/models.py', 'class User:\n    pass\n');
+    write('src/shop/db.py', 'def connect():\n    return 1\n');
+    write('src/shop/json.py', 'def dumps(x):\n    return str(x)\n'); // shadows the stdlib name: `import json` must not resolve here
+    write('src/shop/typehints.py', 'Hint = int\n');
+    write('src/shop/service.py', [
+      '"""Service.', '', 'Example:', '    from shop.typehints import Hint', '"""', 'import json',
+      'from typing import TYPE_CHECKING', 'from .models import (', '    User,', ')', 'from shop import db',
+      'if TYPE_CHECKING:', '    from shop.typehints import Hint', '', '', 'def run():', '    return json.dumps(db.connect()), User()', '',
+    ].join('\n'));
+    write('go.mod', 'module example.com/svc\n\ngo 1.22\n');
+    write('main.go', 'package main\n\nimport (\n\t"fmt"\n\n\t"example.com/svc/store"\n)\n\nfunc main() {\n\tfmt.Println(store.Open())\n\trun()\n}\n');
+    write('run.go', 'package main\n\nfunc run() {}\n');
+    write('store/store.go', 'package store\n\nfunc Open() int { return 1 }\n');
+    write('store/other.go', 'package store\n\nfunc Other() {}\n');
+    const g = (...a) => execFileSync(gitBin, a, { cwd: pg, stdio: 'pipe' });
+    g('init', '-q'); g('add', '-A'); g('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'init');
+    r = await run(['map', pg, '--no-open', '--backend', 'openai'], stEnv);
+    const t = existsSync(join(pg, '.loupe', 'tree.json')) ? JSON.parse(readFileSync(join(pg, '.loupe', 'tree.json'), 'utf8')) : { root: {} };
+    const fm = existsSync(join(pg, '.loupe', 'tree.files.json')) ? JSON.parse(readFileSync(join(pg, '.loupe', 'tree.files.json'), 'utf8')) : {};
+    const rels = t.root.relations || [];
+    const edge = (a, b) => rels.find((x) => x.kind === 'import' && x.from === fm[a] && x.to === fm[b]);
+    const dump = JSON.stringify(rels.map((x) => [x.from, x.to, x.label]));
+    check(r.code === 0 && /uses User/.test(edge('src/shop/service.py', 'src/shop/models.py')?.label || '') && edge('src/shop/service.py', 'src/shop/db.py'), 'python imports: relative and absolute (src layout, parenthesised) imports resolve', dump);
+    check(!edge('src/shop/service.py', 'src/shop/json.py') && !edge('src/shop/service.py', 'src/shop/typehints.py'), 'python imports: stdlib names, docstrings and TYPE_CHECKING blocks are skipped', dump);
+    check(/uses Open/.test(edge('main.go', 'store/store.go')?.label || '') && !edge('main.go', 'store/other.go'), 'go imports: module import resolves to the file declaring the used symbol', dump);
+    check(/uses run/.test(edge('main.go', 'run.go')?.label || ''), 'go imports: same-package references between files', dump);
+  }
+
+  // ---------- Java + PHP + Rust import relations ----------
+  {
+    const jr = join(TMP, 'java-php-rust-imports');
+    const write = (rel, content) => { const full = join(jr, rel); mkdirSync(dirname(full), { recursive: true }); writeFileSync(full, content); };
+    const J = 'src/main/java/com/acme';
+    write(`${J}/model/User.java`, 'package com.acme.model;\n\npublic class User {}\n');
+    write(`${J}/repo/UserRepo.java`, 'package com.acme.repo;\n\npublic interface UserRepo {}\n');
+    write(`${J}/repo/Unused.java`, 'package com.acme.repo;\n\npublic class Unused {}\n');
+    write(`${J}/web/Helper.java`, 'package com.acme.web;\n\nclass Helper {}\n');
+    write(`${J}/web/UserController.java`, 'package com.acme.web;\n\nimport com.acme.model.User;\nimport com.acme.repo.*;\n\n/**\n * Unused is mentioned only in this comment.\n */\npublic class UserController {\n  private UserRepo repo;\n  private Helper helper;\n  private User user;\n}\n');
+    write('php/Http/Route.php', '<?php\nnamespace App\\Http;\n\nfinal class Route {}\n');
+    write('php/Http/Router.php', '<?php\nnamespace App\\Http;\n\nclass Router\n{\n    public function add(): Route { return new Route(); }\n}\n');
+    write('php/Support/Str.php', '<?php\nnamespace App\\Support;\n\nclass Str {}\n');
+    write('php/Support/Arr.php', '<?php\nnamespace App\\Support;\n\nclass Arr {}\n');
+    write('php/App.php', '<?php\nnamespace App;\n\nuse App\\Http\\Router;\nuse App\\Support\\{Str, Arr as A};\n\nclass App\n{\n    public function run(): Router { return new Router(); }\n}\n');
+    write('crates/core/Cargo.toml', '[package]\nauthors = ["t"]\nname = "core-lib"\nversion = "0.1.0"\n');
+    write('crates/core/src/lib.rs', 'pub mod parser;\npub mod util;\n\npub use parser::Parser;\n');
+    write('crates/core/src/parser.rs', "use crate::util::{trim, Pad as P};\n\npub struct Parser;\n\npub fn parse<'a>(s: &'a str) -> &'a str { let _p = P; super::util::trim(s) }\n");
+    write('crates/core/src/util.rs', 'pub fn trim(s: &str) -> &str { s }\npub struct Pad;\n');
+    write('crates/core/src/bin/tool.rs', 'use core_lib::Parser;\n\nfn main() { let _ = Parser; }\n');
+    const g = (...a) => execFileSync(gitBin, a, { cwd: jr, stdio: 'pipe' });
+    g('init', '-q'); g('add', '-A'); g('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'init');
+    r = await run(['map', jr, '--no-open', '--backend', 'openai'], stEnv);
+    const t = existsSync(join(jr, '.loupe', 'tree.json')) ? JSON.parse(readFileSync(join(jr, '.loupe', 'tree.json'), 'utf8')) : { root: {} };
+    const fm = existsSync(join(jr, '.loupe', 'tree.files.json')) ? JSON.parse(readFileSync(join(jr, '.loupe', 'tree.files.json'), 'utf8')) : {};
+    const rels = t.root.relations || [];
+    const edge = (a, b) => rels.find((x) => x.kind === 'import' && x.from === fm[a] && x.to === fm[b]);
+    const dump = JSON.stringify(rels.map((x) => [x.from, x.to, x.label]));
+    const ctl = `${J}/web/UserController.java`;
+    // small files can share a `more:` node, so check each relation's detail labels rather than its target
+    const uses = (from, sym) => rels.some((x) => x.kind === 'import' && x.from === fm[from] && (x.details || []).some((d) => new RegExp(`\\b${sym}\\b`).test(d)));
+    check(r.code === 0 && uses(ctl, 'User') && uses(ctl, 'UserRepo') && !rels.some((x) => (x.details || []).some((d) => /Unused/.test(d))), 'java imports: single-type and wildcard imports resolve to used types only', dump);
+    check(uses(ctl, 'Helper'), 'java imports: same-package types used without an import', dump);
+    check(edge('php/App.php', 'php/Http/Router.php') && edge('php/App.php', 'php/Support/Str.php') && /uses Arr/.test(edge('php/App.php', 'php/Support/Arr.php')?.label || ''), 'php imports: use and group use (with alias) resolve by namespace', dump);
+    check(/uses Route/.test(edge('php/Http/Router.php', 'php/Http/Route.php')?.label || ''), 'php imports: same-namespace classes used without use', dump);
+    check(/uses trim, Pad/.test(edge('crates/core/src/parser.rs', 'crates/core/src/util.rs')?.label || '') && /uses Parser/.test(edge('crates/core/src/lib.rs', 'crates/core/src/parser.rs')?.label || ''), 'rust imports: crate:: use trees and self-relative re-exports resolve to module files', dump);
+    check(/uses Parser/.test(edge('crates/core/src/bin/tool.rs', 'crates/core/src/lib.rs')?.label || ''), 'rust imports: a bin target reaches the library through its crate name (dashes as underscores)', dump);
+  }
+
   // ---------- skip vendored, build, generated, gitignored, .gitattributes & minified files (with re-include) ----------
   {
     const vend = join(TMP, 'vendored-repo');

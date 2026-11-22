@@ -189,7 +189,328 @@ for (const fi of files.values()) {
     add(fi.node, files.get(target).node, 'import', label, [fi.path, line]); nImports++;
   }
 }
+const usesLabel = (syms) => (syms.length ? `uses ${syms.slice(0, 3).join(', ')}${syms.length > 3 ? ` +${syms.length - 3}` : ''}` : 'imports');
+nImports += pythonImports() + goImports() + javaImports() + phpImports() + rustImports();
 log('imports', nImports);
+
+// Python: `import a.b`, `from a.b import c`, relative `from ..x import y`; skips docstrings and `if TYPE_CHECKING:` blocks.
+// Absolute modules resolve by path suffix (so src/ layouts work) when the directory above the top package is not itself a package.
+function pythonImports() {
+  const py = [...files.keys()].filter((f) => f.endsWith('.py'));
+  if (!py.length) return 0;
+  const initCache = new Map();
+  const hasInit = (dir) => { if (!initCache.has(dir)) initCache.set(dir, isRegularFile(dir === '' ? '__init__.py' : `${dir}/__init__.py`)); return initCache.get(dir); };
+  const modKey = (f) => f.replace(/(^|\/)__init__\.py$/, '').replace(/\.py$/, '');
+  const byLast = new Map(); // last path segment -> [[modKey, file]]
+  for (const f of py) { const k = modKey(f); if (!k) continue; const last = k.split('/').pop(); if (!byLast.has(last)) byLast.set(last, []); byLast.get(last).push([k, f]); }
+  const exact = (rel) => (files.has(`${rel}.py`) ? `${rel}.py` : files.has(`${rel}/__init__.py`) ? `${rel}/__init__.py` : null);
+  function resolve(from, mod, level) {
+    if (level > 0) {
+      let base = posix.dirname(from); for (let i = 1; i < level; i++) base = posix.dirname(base);
+      if (!mod) return exact(base === '.' ? '' : base) || (files.has(`${base}/__init__.py`) ? `${base}/__init__.py` : null);
+      return exact(posix.normalize(`${base}/${mod.replace(/\./g, '/')}`).replace(/^\.\//, ''));
+    }
+    const rel = mod.replace(/\./g, '/');
+    const cands = (byLast.get(rel.split('/').pop()) || []).filter(([k]) => {
+      if (k !== rel && !k.endsWith(`/${rel}`)) return false;
+      const prefix = k.slice(0, k.length - rel.length).replace(/\/$/, '');
+      return !hasInit(prefix);
+    });
+    if (!cands.length) return null;
+    const pkg = pkgOf(from);
+    cands.sort((a, b) => (pkgOf(b[1]) === pkg) - (pkgOf(a[1]) === pkg) || a[0].length - b[0].length);
+    return cands[0][1];
+  }
+  let n = 0;
+  for (const fi of files.values()) {
+    if (!fi.path.endsWith('.py')) continue;
+    const names = importsOf.get(fi.path) || new Map(); importsOf.set(fi.path, names);
+    const lines = fi.lines;
+    let inStr = null, tcIndent = -1;
+    const edges = new Map(); // target -> { syms, line }
+    const hit = (target, sym, line) => { if (!target || target === fi.path) return; let e = edges.get(target); if (!e) edges.set(target, (e = { syms: [], line })); if (sym && !e.syms.includes(sym)) e.syms.push(sym); };
+    for (let i = 0; i < lines.length; i++) {
+      const raw = lines[i];
+      if (inStr) { const j = raw.indexOf(inStr); if (j < 0) continue; const rest = raw.slice(j + 3); inStr = null; const t = rest.match(/"""|'''/g); if (t && t.length % 2) inStr = t[t.length - 1]; continue; }
+      const indent = raw.match(/^\s*/)[0].length;
+      if (tcIndent >= 0 && raw.trim() && indent <= tcIndent && !/^\s*#/.test(raw)) tcIndent = -1;
+      if (/^\s*if\s+(?:typing\.)?TYPE_CHECKING\s*:\s*(#.*)?$/.test(raw)) { tcIndent = indent; continue; }
+      const m = tcIndent < 0 && raw.match(/^\s*(?:from\s+(\.*)([\w.]*)\s+import\s+(.*)|import\s+(.*))$/);
+      if (m) {
+        let rest = (m[3] ?? m[4]).replace(/#.*$/, '').trim();
+        let j = i;
+        if (rest.startsWith('(')) { while (!rest.includes(')') && j + 1 < lines.length) rest += ' ' + lines[++j].replace(/#.*$/, '').trim(); rest = rest.replace(/[()]/g, ''); }
+        else while (rest.endsWith('\\') && j + 1 < lines.length) rest = rest.slice(0, -1) + ' ' + lines[++j].replace(/#.*$/, '').trim();
+        const parts = rest.split(',').map((s) => s.trim()).filter(Boolean).map((s) => { const [orig, alias] = s.split(/\s+as\s+/); return [orig.trim(), (alias || orig).trim()]; });
+        const line = i + 1;
+        if (m[4] !== undefined) { // import a.b.c [as d]
+          for (const [orig, alias] of parts) {
+            const segs = orig.split('.'); let target = null;
+            for (let k = segs.length; k > 0 && !target; k--) target = resolve(fi.path, segs.slice(0, k).join('.'), 0);
+            if (target) { hit(target, null, line); names.set(alias.split('.')[0], target); }
+          }
+        } else {
+          const level = m[1].length, mod = m[2];
+          const base = resolve(fi.path, mod, level);
+          for (const [orig, alias] of parts) {
+            if (orig === '*') { hit(base, null, line); continue; }
+            const sub = resolve(fi.path, mod ? `${mod}.${orig}` : orig, level);
+            if (sub) { hit(sub, null, line); names.set(alias, sub); } else if (base) { hit(base, orig, line); names.set(alias, base); }
+          }
+        }
+        i = j; continue;
+      }
+      const t = raw.replace(/#.*$/, '').match(/"""|'''/g);
+      if (t && t.length % 2) inStr = t[t.length - 1];
+    }
+    for (const [target, e] of edges) { add(fi.node, files.get(target).node, 'import', usesLabel(e.syms), [fi.path, e.line]); n++; }
+  }
+  return n;
+}
+
+// Go: imports of packages inside the repo's own module(s) (go.mod), attributed to the file that declares each `pkg.Symbol`
+// used; plus references between files of the same package, which share names without importing each other.
+function goImports() {
+  const goFiles = [...files.values()].filter((f) => f.path.endsWith('.go'));
+  if (!goFiles.length) return 0;
+  const strip = (l) => l.replace(/"(?:[^"\\]|\\.)*"|`[^`]*`|'(?:[^'\\]|\\.)*'/g, '""').replace(/\/\/.*$/, '');
+  // modules: go.mod in any ancestor directory of a .go file
+  const modOfDir = new Map(), modules = new Map(); // module path -> dir
+  const findMod = (dir) => {
+    if (modOfDir.has(dir)) return modOfDir.get(dir);
+    const txt = readRepo(dir === '.' ? 'go.mod' : `${dir}/go.mod`); const mm = txt.match(/^module\s+(\S+)/m);
+    const out = mm ? (modules.set(mm[1], dir), dir) : dir === '.' ? null : findMod(posix.dirname(dir));
+    modOfDir.set(dir, out); return out;
+  };
+  // packages: dir -> { files, name, decls: ident -> file (null when declared in more than one file) }
+  const pkgs = new Map();
+  for (const fi of goFiles) {
+    const dir = posix.dirname(fi.path); findMod(dir);
+    let p = pkgs.get(dir); if (!p) pkgs.set(dir, (p = { files: [], name: null, decls: new Map() }));
+    p.files.push(fi);
+    const pm = fi.text.match(/^package\s+(\w+)/m); if (pm && !p.name) p.name = pm[1];
+    const decl = (id) => { if (id === '_' || id === 'init' || id === 'main') return; p.decls.set(id, p.decls.has(id) && p.decls.get(id) !== fi.path ? null : fi.path); };
+    let block = null;
+    for (const l of fi.lines) {
+      if (block) { if (/^\)/.test(l)) { block = null; continue; } const bm = l.match(/^\t([A-Za-z_]\w*)\b/); if (bm) decl(bm[1]); continue; }
+      const bo = l.match(/^(var|const|type)\s*\(\s*$/); if (bo) { block = bo[1]; continue; }
+      const dm = l.match(/^func\s+([A-Za-z_]\w*)\s*[[(]/) || l.match(/^(?:type|var|const)\s+([A-Za-z_]\w*)\b/); if (dm) decl(dm[1]);
+    }
+  }
+  const pkgDirFor = (path) => {
+    let best = null;
+    for (const [mod, dir] of modules) if ((path === mod || path.startsWith(mod + '/')) && (!best || mod.length > best[0].length)) best = [mod, dir];
+    if (!best) return null;
+    const sub = path.slice(best[0].length + 1); const d = !sub ? best[1] : best[1] === '.' ? sub : `${best[1]}/${sub}`;
+    return pkgs.has(d) ? d : null;
+  };
+  const repFile = (p) => (p.files.find((f) => posix.basename(f.path, '.go') === p.name || posix.basename(f.path, '.go') === posix.basename(posix.dirname(f.path))) || p.files[0]).path;
+  let n = 0;
+  for (const fi of goFiles) {
+    const dir = posix.dirname(fi.path), own = pkgs.get(dir);
+    const edges = new Map(); // target -> { syms, line }
+    const hit = (target, sym, line) => { if (!target || target === fi.path) return; let e = edges.get(target); if (!e) edges.set(target, (e = { syms: [], line })); if (sym && !e.syms.includes(sym)) e.syms.push(sym); };
+    // imports
+    const imports = []; // { alias, dir, line }
+    let inBlock = false;
+    fi.lines.forEach((l, i) => {
+      if (inBlock) { if (/^\s*\)/.test(l)) { inBlock = false; return; } }
+      else if (/^import\s*\(\s*$/.test(l)) { inBlock = true; return; }
+      const im = inBlock ? l.match(/^\s*([\w.]+\s+)?"([^"]+)"/) : l.match(/^import\s+([\w.]+\s+)?"([^"]+)"/);
+      if (!im) return;
+      const target = pkgDirFor(im[2]); if (!target) return;
+      const alias = im[1]?.trim() || pkgs.get(target).name || posix.basename(im[2]);
+      imports.push({ alias, dir: target, line: i + 1 });
+    });
+    for (const imp of imports) {
+      const p = pkgs.get(imp.dir); let found = false;
+      if (/^\w+$/.test(imp.alias) && imp.alias !== '_') {
+        const re = new RegExp(`(?<![\\w.])${imp.alias}\\.([A-Za-z_]\\w*)`, 'g');
+        fi.lines.forEach((l, i) => { if (i + 1 === imp.line || isCommentLine(l, fi.path)) return; for (const m of strip(l).matchAll(re)) { const f = p.decls.get(m[1]); if (f) { hit(f, m[1], i + 1); found = true; } } });
+      }
+      if (!found) hit(repFile(p), null, imp.line);
+    }
+    // same-package references (only names declared in exactly one other file of this package)
+    if (own && own.files.length > 1) {
+      const ID = /(?<![\w.])([A-Za-z_]\w+)\b/g;
+      fi.lines.forEach((l, i) => {
+        if (/^\s*(import\b|"[^"]*"\s*$|package\s)/.test(l) || isCommentLine(l, fi.path)) return;
+        for (const m of strip(l).matchAll(ID)) { const f = own.decls.get(m[1]); if (f && f !== fi.path) hit(f, m[1], i + 1); }
+      });
+    }
+    for (const [target, e] of edges) { add(fi.node, files.get(target).node, 'import', usesLabel(e.syms), [fi.path, e.line]); n++; }
+  }
+  return n;
+}
+
+// shared by the Java/Kotlin, PHP and Rust detectors: per-file edge collector and comment/string stripping
+function edgeCollector(fi) {
+  const edges = new Map(); // target -> { syms, line }
+  return {
+    hit(target, sym, line) { if (!target || target === fi.path || !files.has(target)) return; let e = edges.get(target); if (!e) edges.set(target, (e = { syms: [], line })); if (sym && !e.syms.includes(sym)) e.syms.push(sym); },
+    flush() { let n = 0; for (const [target, e] of edges) { add(fi.node, files.get(target).node, 'import', usesLabel(e.syms), [fi.path, e.line]); n++; } return n; },
+  };
+}
+// single-char quotes only for '…' unless multiChar (PHP), so Rust lifetimes ('a) are not read as strings
+function stripCode(l, { multiChar = false, hash = false } = {}) {
+  const s = l.replace(multiChar ? /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g : /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)'/g, '""').replace(/\/\/.*$/, '');
+  return hash ? s.replace(/#(?!\[).*$/, '') : s;
+}
+// names declared in one file of a package/namespace, used bare from another file of the same package/namespace
+function sameGroupRefs(fi, decls, hit, strip) {
+  fi.lines.forEach((l, i) => {
+    if (isCommentLine(l, fi.path) || /^\s*(import|package|namespace|use)\b/.test(l)) return;
+    for (const m of strip(l).matchAll(/(?<![\w$\\.>:])([A-Za-z_]\w*)\b/g)) { const f = decls.get(m[1]); if (f && f !== fi.path) hit(f, m[1], i + 1); }
+  });
+}
+// group -> Map(name -> file, or null when more than one file declares it)
+function declare(groups, group, name, file) { let g = groups.get(group); if (!g) groups.set(group, (g = new Map())); g.set(name, g.has(name) && g.get(name) !== file ? null : file); }
+
+// Java / Kotlin: `import a.b.C;`, `import static a.b.C.m;`, `import a.b.*;` resolved through each file's
+// `package` + declared types; plus types of the same package used without an import.
+function javaImports() {
+  const jv = [...files.values()].filter((f) => /\.(java|kt)$/.test(f.path));
+  if (!jv.length) return 0;
+  const fqn = new Map(); const byPkg = new Map(); const pkgOfFile = new Map();
+  const DECL = /^\s*(?:(?:public|protected|private|internal|abstract|final|sealed|non-sealed|static|strictfp|open|data|enum|annotation|inner|value)\s+)*(?:class|interface|enum|record|@interface|object)\s+([A-Z]\w*)/gm;
+  for (const fi of jv) {
+    const pkg = fi.text.match(/^\s*package\s+([\w.]+)/m)?.[1] || ''; pkgOfFile.set(fi.path, pkg);
+    for (const m of fi.text.matchAll(DECL)) { const k = pkg ? `${pkg}.${m[1]}` : m[1]; if (!fqn.has(k)) fqn.set(k, fi.path); declare(byPkg, pkg, m[1], fi.path); }
+  }
+  let n = 0;
+  for (const fi of jv) {
+    const c = edgeCollector(fi); const strip = (l) => stripCode(l);
+    const used = (name) => fi.lines.some((l, i) => !/^\s*(import|package)\b/.test(l) && !isCommentLine(l, fi.path) && new RegExp(`(?<![\\w.])${name}\\b`).test(strip(l)));
+    fi.lines.forEach((l, i) => {
+      const m = l.match(/^\s*import\s+(static\s+)?([\w.]+?)(\.\*)?(?:\s+as\s+\w+)?\s*;?\s*$/); if (!m) return;
+      if (m[3] && !m[1]) { for (const [name, f] of byPkg.get(m[2]) || []) if (f && used(name)) c.hit(f, name, i + 1); return; }
+      const segs = m[2].split('.');
+      for (let k = segs.length; k > 0; k--) { const f = fqn.get(segs.slice(0, k).join('.')); if (f) { c.hit(f, segs[k - 1], i + 1); break; } }
+    });
+    sameGroupRefs(fi, byPkg.get(pkgOfFile.get(fi.path)) || new Map(), c.hit, strip);
+    n += c.flush();
+  }
+  return n;
+}
+
+// PHP: top-level `use A\B\C [as D];` and group `use A\B\{C, D};` resolved through each file's `namespace` + declared
+// classes/interfaces/traits/enums (case-insensitive, like PHP); plus classes of the same namespace used without `use`.
+function phpImports() {
+  const php = [...files.values()].filter((f) => f.path.endsWith('.php'));
+  if (!php.length) return 0;
+  const fqn = new Map(); const byNs = new Map(); const nsOfFile = new Map();
+  for (const fi of php) {
+    const ns = fi.text.match(/^\s*namespace\s+([\w\\]+)\s*[;{]/m)?.[1] || ''; nsOfFile.set(fi.path, ns);
+    for (const m of fi.text.matchAll(/^\s*(?:(?:abstract|final|readonly)\s+)*(?:class|interface|trait|enum)\s+([A-Za-z_]\w*)/gm)) {
+      const k = (ns ? `${ns}\\${m[1]}` : m[1]).toLowerCase(); if (!fqn.has(k)) fqn.set(k, fi.path); declare(byNs, ns, m[1], fi.path);
+    }
+  }
+  let n = 0;
+  for (const fi of php) {
+    const c = edgeCollector(fi); const strip = (l) => stripCode(l, { multiChar: true, hash: true });
+    for (let i = 0; i < fi.lines.length; i++) {
+      if (!/^use\s/.test(fi.lines[i])) continue; // column 0 only: indented `use` is a trait use or a closure
+      let stmt = fi.lines[i]; let j = i;
+      while (!stmt.includes(';') && j + 1 < fi.lines.length) stmt += ' ' + fi.lines[++j];
+      const body = stmt.replace(/^use\s+/, '').replace(/;.*$/, '').trim();
+      if (/^(function|const)\s/.test(body)) { i = j; continue; }
+      const g = body.match(/^([\w\\]+)\\\{([^}]*)\}/);
+      const names = g ? g[2].split(',').map((s) => `${g[1]}\\${s.trim()}`) : body.split(',');
+      for (const raw of names) {
+        const name = raw.trim().replace(/^\\/, '').split(/\s+as\s+/i)[0].trim(); if (!name) continue;
+        const f = fqn.get(name.toLowerCase()); if (f) c.hit(f, name.split('\\').pop(), i + 1);
+      }
+      i = j;
+    }
+    sameGroupRefs(fi, byNs.get(nsOfFile.get(fi.path)) || new Map(), c.hit, strip);
+    n += c.flush();
+  }
+  return n;
+}
+
+// Rust: `use` trees (`crate::`, `self::`, `super::`, workspace crate names, `{a, b::{c}}` groups) and inline
+// `crate::a::b(...)` paths, resolved over each crate's module files (a.rs, a/mod.rs) under src/ and src/bin/.
+function rustImports() {
+  const rs = [...files.values()].filter((f) => f.path.endsWith('.rs'));
+  if (!rs.length) return 0;
+  // crates: nearest ancestor with Cargo.toml
+  const crateOfDir = new Map(), crateNames = new Map(); // crate name -> lib ctx id
+  const findCrate = (dir) => {
+    if (crateOfDir.has(dir)) return crateOfDir.get(dir);
+    const toml = readRepo(dir === '.' ? 'Cargo.toml' : `${dir}/Cargo.toml`);
+    let out;
+    if (/^\s*\[package\]/m.test(toml)) {
+      out = dir;
+      const names = {}; let section = '';
+      for (const line of toml.split('\n')) { const h = line.match(/^\s*\[([^\]]+)\]\s*$/); if (h) { section = h[1].trim(); continue; } const nm = line.match(/^\s*name\s*=\s*"([^"]+)"/); if (nm && !names[section]) names[section] = nm[1]; }
+      const lib = names.lib || names.package;
+      if (lib) crateNames.set(lib.replace(/-/g, '_'), `${dir}::src`);
+    } else out = dir === '.' ? null : findCrate(posix.dirname(dir));
+    crateOfDir.set(dir, out); return out;
+  };
+  // module context: { ctx, path[] } for each file; ctx is the directory whose files form one module tree
+  const modFile = new Map(); // `${ctx}|a::b` -> file
+  const info = new Map(); // file -> { ctx, path }
+  for (const fi of rs) {
+    const crate = findCrate(posix.dirname(fi.path)); if (crate == null) continue;
+    const src = crate === '.' ? 'src' : `${crate}/src`;
+    if (!fi.path.startsWith(src + '/')) continue;
+    let rel = fi.path.slice(src.length + 1), ctx = `${crate}::src`;
+    const bin = rel.match(/^bin\/([^/]+?)(?:\.rs$|\/(.*)$)/);
+    if (bin) { ctx = `${crate}::bin/${bin[1]}`; rel = bin[2] ?? 'main.rs'; }
+    let path = rel.replace(/\.rs$/, '').split('/');
+    if (path[path.length - 1] === 'mod') path.pop();
+    if (path.length === 1 && (path[0] === 'lib' || path[0] === 'main')) path = [];
+    info.set(fi.path, { ctx, path });
+    const key = `${ctx}|${path.join('::')}`;
+    if (!modFile.has(key) || /(^|\/)lib\.rs$/.test(fi.path)) modFile.set(key, fi.path); // src/lib.rs wins the root over src/main.rs
+  }
+  const expand = (tree) => { // "a::{b, c::{d}}" -> ["a::b", "a::c::d"]
+    const t = tree.replace(/\s*([{},]|::)\s*/g, '$1').trim(); const open = t.indexOf('{');
+    if (open < 0) return [t];
+    const prefix = t.slice(0, open); const inner = t.slice(open + 1, t.lastIndexOf('}'));
+    const parts = []; let depth = 0, cur = '';
+    for (const ch of inner) { if (ch === '{') depth++; if (ch === '}') depth--; if (ch === ',' && !depth) { parts.push(cur); cur = ''; } else cur += ch; }
+    parts.push(cur);
+    return parts.filter(Boolean).flatMap((p) => expand(p).map((x) => (x === 'self' ? prefix.replace(/::$/, '') : prefix + x)));
+  };
+  const resolve = (segs, me) => { // -> { file, sym } or null
+    let ctx = me.ctx, base;
+    if (segs[0] === 'crate') { base = []; segs = segs.slice(1); }
+    else if (segs[0] === 'self') { base = me.path; segs = segs.slice(1); }
+    else if (segs[0] === 'super') { base = me.path; while (segs[0] === 'super') { base = base.slice(0, -1); segs = segs.slice(1); } }
+    else if (crateNames.has(segs[0])) { ctx = crateNames.get(segs[0]); base = []; segs = segs.slice(1); }
+    else {
+      for (const b of [me.path, []]) if (modFile.has(`${ctx}|${[...b, segs[0]].join('::')}`)) { base = b; break; }
+      if (!base) return null;
+    }
+    let k = segs.length;
+    while (k >= 0 && !modFile.has(`${ctx}|${[...base, ...segs.slice(0, k)].join('::')}`)) k--;
+    if (k < 0) return null;
+    const sym = segs[k] && segs[k] !== '*' && !/^(self|super|crate)$/.test(segs[k]) ? segs[k] : null;
+    return { file: modFile.get(`${ctx}|${[...base, ...segs.slice(0, k)].join('::')}`), sym };
+  };
+  const crateRe = () => new RegExp(`(?<![\\w:])((?:crate|super|self${[...crateNames.keys()].map((c) => `|${c}`).join('')})(?:::[A-Za-z_]\\w*)+)`, 'g');
+  let n = 0;
+  for (const fi of rs) {
+    const me = info.get(fi.path); if (!me) continue;
+    const c = edgeCollector(fi); const PATH = crateRe();
+    for (let i = 0; i < fi.lines.length; i++) {
+      const l = fi.lines[i];
+      if (isCommentLine(l, fi.path)) continue;
+      if (/^\s*(pub(\([^)]*\))?\s+)?use\s/.test(l)) {
+        let stmt = l; let j = i;
+        while (!stmt.includes(';') && j + 1 < fi.lines.length) stmt += ' ' + fi.lines[++j];
+        const tree = stmt.replace(/^\s*(pub(\([^)]*\))?\s+)?use\s+/, '').replace(/;.*$/, '').replace(/^::/, '');
+        for (const p of expand(tree)) { const r = resolve(p.replace(/\s+as\s+\w+$/, '').split('::').filter(Boolean), me); if (r) c.hit(r.file, r.sym, i + 1); }
+        i = j; continue;
+      }
+      for (const m of stripCode(l).matchAll(PATH)) { const r = resolve(m[1].split('::'), me); if (r) c.hit(r.file, r.sym, i + 1); }
+    }
+    n += c.flush();
+  }
+  return n;
+}
 
 // ---------------------------------------------------------------- HTTP: server routes -> handler, callers
 const routes = [];
