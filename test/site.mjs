@@ -15,7 +15,7 @@ const check = (ok, msg) => { if (!ok) fails.push(msg); };
 // 1. build
 const build = spawnSync(process.execPath, [join(ROOT, 'scripts/build-site.mjs')], { encoding: 'utf8' });
 if (build.status !== 0) { console.error(build.stderr || build.stdout); process.exit(1); }
-for (const f of ['index.html', 'style.css', 'site.js', 'favicon.svg', 'demos/excalidraw.html', 'fonts/inter.woff', 'fonts/jbmono.woff', 'LICENSE.txt', 'THIRD_PARTY_NOTICES.txt', '.nojekyll'])
+for (const f of ['index.html', 'style.css', 'site.js', 'favicon.svg', 'demos/immich.html', 'fonts/inter.woff', 'fonts/jbmono.woff', 'LICENSE.txt', 'THIRD_PARTY_NOTICES.txt', '.nojekyll'])
   check(existsSync(join(SITE, f)), `missing _site/${f}`);
 
 // 2. references: nothing external except <a href>, and every local reference resolves
@@ -104,8 +104,8 @@ const checkInspectorCloseClear = async (page, frame, label) => {
   check(closeCenter, `${label}: inspector Close button not found`);
   if (!closeCenter) return null;
   const hit = await page.evaluate(({ ix, iy }) => {
-    const frameEl = document.querySelector('#panel-excalidraw .frame');
-    const iframeEl = document.querySelector('#panel-excalidraw iframe');
+    const frameEl = document.querySelector('#panel-immich .frame');
+    const iframeEl = document.querySelector('#panel-immich iframe');
     const s = parseFloat(getComputedStyle(frameEl).getPropertyValue('--s')) || 1;
     const ir = iframeEl.getBoundingClientRect();
     const px = ir.left + ix * s;
@@ -140,9 +140,9 @@ try {
 
     // desktop hero: frame starts in the upper viewport, fits the viewport, leaves page-scroll gutters, visible share >= 40%, veil-free, no site controls on the canvas, full-screen link in the caption below
     const hero = await page.evaluate(() => {
-      const frame = document.querySelector('#panel-excalidraw .frame');
-      const iframe = document.querySelector('#panel-excalidraw iframe');
-      const veil = document.querySelector('#panel-excalidraw .veil');
+      const frame = document.querySelector('#panel-immich .frame');
+      const iframe = document.querySelector('#panel-immich iframe');
+      const veil = document.querySelector('#panel-immich .veil');
       const full = document.getElementById('full-link');
       const r = iframe.getBoundingClientRect();
       const fr = frame.getBoundingClientRect();
@@ -168,11 +168,11 @@ try {
     check(hero.fullBelow && hero.fullAccessible, `${colorScheme}: full-screen link should sit in the caption below the frame with an accessible name`);
     check(hero.overlays === 0, `${colorScheme}: the frame should hold only the map, found ${hero.overlays} site control(s) on the canvas`);
 
-    const ex = await mapReady(page, 'excalidraw');
-    check(ex, `${colorScheme}: Excalidraw map did not load`);
-    check(ex && await opened(ex), `${colorScheme}: Excalidraw map did not open a level deeper`);
+    const ex = await mapReady(page, 'immich');
+    check(ex, `${colorScheme}: Immich map did not load`);
+    check(ex && await opened(ex), `${colorScheme}: Immich map did not open a level deeper`);
     check(await page.evaluate(() => document.activeElement === document.body), `${colorScheme}: opening the map moved focus`);
-    await checkMapRendered(ex, `${colorScheme} desktop Excalidraw`);
+    await checkMapRendered(ex, `${colorScheme} desktop Immich`);
 
     // the demo shows the artifact as it really looks: its own canvas and dot grid, not restyled by the site
     if (ex) {
@@ -180,15 +180,15 @@ try {
         const g0 = document.getElementById('grid0');
         return !!g0 && getComputedStyle(g0).visibility !== 'hidden' && !document.documentElement.style.background;
       });
-      check(native, `${colorScheme}: Excalidraw demo should keep the viewer's own canvas and dot grid`);
+      check(native, `${colorScheme}: Immich demo should keep the viewer's own canvas and dot grid`);
     }
 
     // immediately interactive on desktop without any veil: clicking a card opens the inspector
     if (ex) {
       await ex.waitForFunction(() => !window.__sz.animating);
-      const box = await (await page.$('#panel-excalidraw iframe')).boundingBox();
+      const box = await (await page.$('#panel-immich iframe')).boundingBox();
       const card = await ex.evaluate(() => window.__sz.visible().filter((v) => v.depth >= 1 && v.openness < 0.5 && v.alpha > 0.9 && v.sw > 60 && v.sx > 0 && v.sy > 0 && v.sx + v.sw < innerWidth && v.sy + v.sh < innerHeight - 100).sort((a, b) => b.sw * b.sh - a.sw * a.sh)[0]);
-      check(card, `${colorScheme}: no closed card visible in Excalidraw`);
+      check(card, `${colorScheme}: no closed card visible in Immich`);
       if (card) {
         await page.mouse.click(box.x + card.sx + card.sw / 2, box.y + card.sy + card.sh / 2);
         const inspOpen = await ex.waitForFunction(() => window.__sz.inspector().open, null, { timeout: 3000 }).then(() => true, () => false);
@@ -220,7 +220,7 @@ try {
     await page.goto(BASE, { waitUntil: 'domcontentloaded' });
     await page.evaluate(() => document.fonts.ready);
     const geom = await page.evaluate(() => {
-      const fr = document.querySelector('#panel-excalidraw .frame').getBoundingClientRect();
+      const fr = document.querySelector('#panel-immich .frame').getBoundingClientRect();
       const visW = Math.max(0, Math.min(fr.right, innerWidth) - Math.max(fr.left, 0));
       const visH = Math.max(0, Math.min(fr.bottom, innerHeight) - Math.max(fr.top, 0));
       return { top: Math.round(fr.top), h: Math.round(fr.height), ratio: (visW * visH) / (innerWidth * innerHeight) };
@@ -228,9 +228,9 @@ try {
     check(geom.top <= 460, `1280px: frame starts at y=${geom.top}px (expected <= 460px)`);
     check(geom.h <= 800 - 64, `1280px: frame height ${geom.h}px exceeds viewport height - 64`);
     check(geom.ratio >= 0.35, `1280px: frame covers only ${(geom.ratio * 100).toFixed(1)}% of first viewport (expected >= 35%)`);
-    const ex = await mapReady(page, 'excalidraw');
-    check(ex && await opened(ex), '1280px reduced-motion: Excalidraw did not open a level deeper');
-    await checkMapRendered(ex, '1280px reduced-motion Excalidraw');
+    const ex = await mapReady(page, 'immich');
+    check(ex && await opened(ex), '1280px reduced-motion: Immich did not open a level deeper');
+    await checkMapRendered(ex, '1280px reduced-motion Immich');
     check(!errs.length, `1280px reduced-motion: ${errs.join(' | ')}`);
     await ctx.close();
   }
@@ -245,7 +245,7 @@ try {
     await page.goto(BASE, { waitUntil: 'domcontentloaded' });
     await page.evaluate(() => document.fonts.ready);
     const geom = await page.evaluate(() => {
-      const fr = document.querySelector('#panel-excalidraw .frame').getBoundingClientRect();
+      const fr = document.querySelector('#panel-immich .frame').getBoundingClientRect();
       const lr = document.getElementById('full-link').getBoundingClientRect();
       return {
         h: fr.height,
@@ -268,19 +268,19 @@ try {
     await page.goto(BASE, { waitUntil: 'domcontentloaded' });
     await page.evaluate(() => document.fonts.ready);
     await waitAnims(page);
-    const ex = await mapReady(page, 'excalidraw');
-    check(ex && await opened(ex), `tablet ${width}px: Excalidraw map did not open a level deeper`);
+    const ex = await mapReady(page, 'immich');
+    check(ex && await opened(ex), `tablet ${width}px: Immich map did not open a level deeper`);
     if (ex) {
       await ex.waitForFunction(() => !window.__sz.animating);
-      await page.evaluate(() => document.querySelector('#panel-excalidraw .frame').scrollIntoView({ block: 'center', behavior: 'instant' }));
+      await page.evaluate(() => document.querySelector('#panel-immich .frame').scrollIntoView({ block: 'center', behavior: 'instant' }));
       await page.waitForTimeout(50);
       const { box, s } = await page.evaluate(() => {
-        const frameEl = document.querySelector('#panel-excalidraw .frame');
-        const ir = document.querySelector('#panel-excalidraw iframe').getBoundingClientRect();
+        const frameEl = document.querySelector('#panel-immich .frame');
+        const ir = document.querySelector('#panel-immich iframe').getBoundingClientRect();
         return { box: { x: ir.left, y: ir.top }, s: parseFloat(getComputedStyle(frameEl).getPropertyValue('--s')) || 1 };
       });
       const card = await ex.evaluate(() => window.__sz.visible().filter((v) => v.depth >= 1 && v.openness < 0.5 && v.alpha > 0.9 && v.sw > 60 && v.sx > 0 && v.sy > 0 && v.sy + v.sh / 2 > 70 && v.sx + v.sw < innerWidth && v.sy + v.sh < innerHeight - 100).sort((a, b) => b.sw * b.sh - a.sw * a.sh)[0]);
-      check(card, `tablet ${width}px: no closed card visible in Excalidraw`);
+      check(card, `tablet ${width}px: no closed card visible in Immich`);
       if (card) {
         await page.mouse.click(box.x + (card.sx + card.sw / 2) * s, box.y + (card.sy + card.sh / 2) * s);
         const inspOpen = await ex.waitForFunction(() => window.__sz.inspector().open, null, { timeout: 3000 }).then(() => true, () => false);
@@ -310,8 +310,8 @@ try {
     const ov = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     check(ov <= 0, `horizontal overflow at ${w}px: ${ov}px`);
   }
-  const fx = await mapReady(page, 'excalidraw');
-  check(fx && await opened(fx), 'phone: Excalidraw map did not open a level deeper');
+  const fx = await mapReady(page, 'immich');
+  check(fx && await opened(fx), 'phone: Immich map did not open a level deeper');
   if (fx) {
     const hudCheck = await fx.evaluate(() => {
       const hud = document.getElementById('hud').getBoundingClientRect();
@@ -325,13 +325,13 @@ try {
     });
     check(hudCheck.inner >= 760, `phone: map renders ${hudCheck.inner}px wide, expected scaled >= 760px`);
     check(!hudCheck.clipped && !hudCheck.crumbTrunc, `phone: viewer HUD controls are clipped/truncated at ${hudCheck.inner}px (${JSON.stringify(hudCheck)})`);
-    await page.tap('#panel-excalidraw .veil');
-    check(!(await page.$('#panel-excalidraw .veil')), 'phone: the veil did not go away on tap');
-    check(await page.evaluate(() => document.activeElement === document.querySelector('#panel-excalidraw iframe')), 'phone: dismissing the veil did not focus the map iframe');
+    await page.tap('#panel-immich .veil');
+    check(!(await page.$('#panel-immich .veil')), 'phone: the veil did not go away on tap');
+    check(await page.evaluate(() => document.activeElement === document.querySelector('#panel-immich iframe')), 'phone: dismissing the veil did not focus the map iframe');
     await fx.waitForFunction(() => !window.__sz.animating);
-    await page.evaluate(() => document.querySelector('#panel-excalidraw .frame').scrollIntoView({ block: 'center', behavior: 'instant' }));
+    await page.evaluate(() => document.querySelector('#panel-immich .frame').scrollIntoView({ block: 'center', behavior: 'instant' }));
     await page.waitForTimeout(100);
-    const box = await (await page.$('#panel-excalidraw iframe')).boundingBox();
+    const box = await (await page.$('#panel-immich iframe')).boundingBox();
     const s = box.width / hudCheck.inner;
     // tap a card: page coordinates = iframe box + map coordinates x scale
     const r = await fx.evaluate(() => window.__sz.visible().filter((v) => v.depth >= 1 && v.openness < 0.5 && v.alpha > 0.9 && v.sw > 40 && v.sx > 0 && v.sy > 0 && v.sx + v.sw < innerWidth && v.sy + v.sh < innerHeight - 100).sort((a, b) => b.sw * b.sh - a.sw * a.sh)[0]);

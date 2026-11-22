@@ -4,7 +4,7 @@ Loupe turns a codebase into a zoomable architecture map: a single HTML file you 
 
 **[Live demo](https://arjanj.github.io/loupe/)**
 
-![The Excalidraw repo in Loupe](docs/screenshots/excalidraw-overview-light.png)
+![The Immich repo in Loupe](docs/screenshots/immich-overview-light.png)
 
 ## Quickstart
 
@@ -77,4 +77,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Run the tests with `npm test`.
 
 ## License
 
-MIT. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for bundled fonts and the Excalidraw demo.
+MIT. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for bundled fonts and the Immich demo.

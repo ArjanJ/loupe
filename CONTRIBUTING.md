@@ -26,11 +26,11 @@ npm test
 4. `test/acceptance.mjs examples/bramble/bramble.html` — viewer layout, interaction, theme, and performance checks.
 5. `test/site.mjs` — builds `_site/` and verifies the landing page across desktop, tablet, and mobile viewports.
 
-You can also check dark mode and the Excalidraw demo:
+You can also check dark mode and the Immich demo:
 
 ```sh
 SCHEME=dark node test/acceptance.mjs examples/bramble/bramble.html
-node test/acceptance.mjs demo/excalidraw/excalidraw.html
+node test/acceptance.mjs demo/immich/immich.html
 ```
 
 If Playwright is installed in another directory, point `PLAYWRIGHT_DIR=/path/to/node_modules` at it.
@@ -67,5 +67,5 @@ Once an OIDC publish has succeeded, you can optionally lock down token publishin
 
 - Keep changes focused and small; open an issue first for larger design changes.
 - Add or update tests for bug fixes and new behavior.
-- If you change `viewer/template.html` or `src/render.mjs`, regenerate the checked-in demos (`npm run example` and `node bin/loupe.mjs render demo/excalidraw/excalidraw.tree.json`) and verify `npm test` passes.
+- If you change `viewer/template.html` or `src/render.mjs`, regenerate the checked-in demos (`npm run example` and `node bin/loupe.mjs render demo/immich/immich.tree.json`) and verify `npm test` passes.
 - Do not include private repo paths, credentials, or real API outputs in commits.

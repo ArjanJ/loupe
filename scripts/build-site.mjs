@@ -10,7 +10,7 @@ const OUT = join(ROOT, '_site');
 
 // [source in the repo, destination in _site]
 export const FILES = [
-  ['demo/excalidraw/excalidraw.html', 'demos/excalidraw.html'],
+  ['demo/immich/immich.html', 'demos/immich.html'],
   ['viewer/fonts/inter.woff', 'fonts/inter.woff'],
   ['viewer/fonts/jbmono.woff', 'fonts/jbmono.woff'],
   ['LICENSE', 'LICENSE.txt'],
