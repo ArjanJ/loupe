@@ -1,6 +1,6 @@
 {
   "name": "@arjanj/loupe",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Zoomable, Apple-style architecture maps for codebases and multi-repo systems. One self-contained HTML file.",
   "type": "module",
   "license": "MIT",
