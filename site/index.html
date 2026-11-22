@@ -6,8 +6,8 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; frame-src 'self'; base-uri 'none'; form-action 'none'">
 <meta name="referrer" content="strict-origin-when-cross-origin">
 <meta name="color-scheme" content="light dark">
-<meta name="theme-color" content="#fbfbfd" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#07070b" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f6f6f4" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f0f11" media="(prefers-color-scheme: dark)">
 <title>Loupe — Zoomable architecture maps for codebases</title>
 <meta name="description" content="Zoomable architecture maps for codebases and multi-repo systems. One self-contained offline HTML file, typed connections with file:line evidence, and your own model.">
 <meta property="og:type" content="website">
@@ -18,7 +18,7 @@
 <meta property="og:image" content="https://arjanj.github.io/loupe/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="Loupe landing page: the headline See your codebase. above a live zoomable architecture map of the Excalidraw repo">
+<meta property="og:image:alt" content="Loupe landing page showing a live zoomable architecture map of the Excalidraw repository">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:image" content="https://arjanj.github.io/loupe/og.png">
 <meta name="twitter:title" content="Loupe — Zoomable architecture maps">
@@ -28,39 +28,39 @@
 <script src="site.js" defer></script>
 </head>
 <body id="top">
-<div class="bg-wash" aria-hidden="true"></div>
 <a class="skip" href="#main">Skip to content</a>
 
-<header class="nav at-top" id="nav">
+<header class="nav" id="nav">
   <div class="nav-in">
     <a class="brand" href="#top" aria-label="Loupe, back to top">
-      <img src="favicon.svg" alt="" width="20" height="20">
+      <img src="favicon.svg" alt="" width="22" height="22">
       <span>Loupe</span>
     </a>
     <nav class="nav-links" aria-label="Primary">
-      <a class="nav-text" href="https://github.com/ArjanJ/loupe" rel="noopener">GitHub</a>
       <a class="nav-text" href="https://www.npmjs.com/package/@arjanj/loupe" rel="noopener">npm</a>
-      <a class="nav-pill" href="#how">Get started</a>
+      <a class="nav-btn" href="https://github.com/ArjanJ/loupe" rel="noopener"><svg class="gh" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg><span>GitHub</span></a>
     </nav>
   </div>
 </header>
 
 <main id="main">
+  <div class="intro">
+  <div class="zoom-grid" aria-hidden="true"></div>
   <section class="hero" aria-labelledby="hero-title">
     <div class="hero-in">
-      <h1 id="hero-title">See your codebase.</h1>
-      <p class="sub">Zoomable architecture maps for codebases and multi&#8209;repo systems. One offline HTML file.</p>
+      <h1 id="hero-title">Zoomable architecture maps for any codebase</h1>
+      <p class="sub">Run one command in any repo and get an interactive map of how your code fits together.</p>
       <div class="hero-act">
         <div class="cmd">
           <span class="prompt" aria-hidden="true">$</span>
           <code id="cmd-text">npx @arjanj/loupe</code>
           <button class="copy" type="button" data-copy="cmd-text" aria-label="Copy command">
-            <svg class="ic-copy" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><rect x="5.25" y="5.25" width="8" height="8" rx="2"/><path d="M10.75 5.25v-1.5a1.5 1.5 0 0 0-1.5-1.5h-5a1.5 1.5 0 0 0-1.5 1.5v5a1.5 1.5 0 0 0 1.5 1.5h1.5"/></svg>
-            <svg class="ic-check" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3.25 8.5 6.5 11.75 12.75 4.75"/></svg>
+            <svg class="ic-copy" viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><rect x="5.25" y="5.25" width="8" height="8" rx="1.5"/><path d="M10.75 5.25v-1.5a1.5 1.5 0 0 0-1.5-1.5h-5a1.5 1.5 0 0 0-1.5 1.5v5a1.5 1.5 0 0 0 1.5 1.5h1.5"/></svg>
+            <svg class="ic-check" viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M3.25 8.5 6.5 11.75 12.75 4.75"/></svg>
             <span class="copy-label">Copy</span>
           </button>
         </div>
-        <a class="hero-link" href="https://github.com/ArjanJ/loupe" rel="noopener">View on GitHub <span aria-hidden="true">›</span></a>
+        <a class="hero-link" href="https://github.com/ArjanJ/loupe" rel="noopener">View on GitHub <span aria-hidden="true">↗</span></a>
       </div>
     </div>
   </section>
@@ -68,86 +68,100 @@
   <section class="demo" id="demo" aria-label="Interactive architecture map demo">
     <div class="stage-wrap">
       <div class="stage" id="stage">
-        <div class="panel" role="tabpanel" id="panel-excalidraw" aria-labelledby="tab-excalidraw">
+        <div class="panel" id="panel-excalidraw">
           <div class="frame">
             <button class="veil" type="button" aria-label="Tap to explore the Excalidraw map">
-              <span><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M6.5 13.5 3.3 10.2a1.3 1.3 0 0 1 1.9-1.8l1.3 1.3V4a1.25 1.25 0 0 1 2.5 0v3.5l3.1.6a1.6 1.6 0 0 1 1.3 1.8l-.5 3.6"/></svg>Tap to explore</span>
+              <span><svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M6.5 13.5 3.3 10.2a1.3 1.3 0 0 1 1.9-1.8l1.3 1.3V4a1.25 1.25 0 0 1 2.5 0v3.5l3.1.6a1.6 1.6 0 0 1 1.3 1.8l-.5 3.6"/></svg>Tap to explore</span>
             </button>
             <iframe src="demos/excalidraw.html" title="Interactive Loupe map of the Excalidraw repository" tabindex="-1"></iframe>
           </div>
         </div>
-        <div class="panel" role="tabpanel" id="panel-bramble" aria-labelledby="tab-bramble" hidden>
-          <div class="frame">
-            <button class="veil" type="button" aria-label="Tap to explore the Bramble map">
-              <span><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M6.5 13.5 3.3 10.2a1.3 1.3 0 0 1 1.9-1.8l1.3 1.3V4a1.25 1.25 0 0 1 2.5 0v3.5l3.1.6a1.6 1.6 0 0 1 1.3 1.8l-.5 3.6"/></svg>Tap to explore</span>
-            </button>
-            <!-- Bramble loads via data-src on first tab switch; never loading="lazy": a lazy iframe in a hidden panel gets a skewed rAF timeline that breaks the viewer's fly animation (blank map, see #16) -->
-            <iframe data-src="demos/bramble.html" title="Interactive Loupe map of Bramble, a fictional multi-repo system" tabindex="-1"></iframe>
-          </div>
-        </div>
-
-        <div class="stage-controls">
-          <div class="tabs" role="tablist" aria-label="Demo maps">
-            <button type="button" role="tab" id="tab-excalidraw" aria-controls="panel-excalidraw" aria-selected="true" data-href="demos/excalidraw.html">
-              Excalidraw <span class="tab-kind">repo</span>
-            </button>
-            <button type="button" role="tab" id="tab-bramble" aria-controls="panel-bramble" aria-selected="false" tabindex="-1" data-href="demos/bramble.html">
-              Bramble <span class="tab-kind">multi&#8209;repo</span>
-            </button>
-          </div>
-          <a class="full" id="full-link" href="demos/excalidraw.html" target="_blank" rel="noopener" title="Open full screen">
-            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5 9.25 6.75M2.5 13.5l4.25-4.25"/></svg>
-            <span class="full-label">Full screen</span>
-            <span class="sr">Open full screen (opens in a new tab)</span>
-          </a>
-        </div>
       </div>
 
-      <div class="stage-hint">
-        <p class="hint fine">Scroll to zoom · Click a card to inspect</p>
-        <p class="hint touch">Pinch to zoom · Tap a card to inspect</p>
+      <div class="stage-meta">
+        <p class="specimen-meta">excalidraw/excalidraw · commit 2c3dcc0</p>
+        <a class="full" id="full-link" href="demos/excalidraw.html" target="_blank" rel="noopener">Open full screen <span aria-hidden="true">↗</span><span class="sr"> (opens in a new tab)</span></a>
+      </div>
+    </div>
+  </section>
+  </div>
+
+  <section class="band" id="start" aria-labelledby="start-title">
+    <div class="band-in split">
+      <h2 id="start-title">Getting started</h2>
+      <div class="doc">
+        <p>You need Node 18+ and git. In the root of any git repository, run:</p>
+        <div class="cmd">
+          <span class="prompt" aria-hidden="true">$</span>
+          <code id="start-cmd">npx @arjanj/loupe</code>
+          <button class="copy" type="button" data-copy="start-cmd" aria-label="Copy command">
+            <svg class="ic-copy" viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><rect x="5.25" y="5.25" width="8" height="8" rx="1.5"/><path d="M10.75 5.25v-1.5a1.5 1.5 0 0 0-1.5-1.5h-5a1.5 1.5 0 0 0-1.5 1.5v5a1.5 1.5 0 0 0 1.5 1.5h1.5"/></svg>
+            <svg class="ic-check" viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M3.25 8.5 6.5 11.75 12.75 4.75"/></svg>
+            <span class="copy-label">Copy</span>
+          </button>
+        </div>
+        <p>The first time, Loupe asks which model to use: Claude Code, an Anthropic API key, or an OpenAI API key. It saves the choice for that repo. Only short code excerpts are sent to the model.</p>
+        <p>When it finishes, <code>architecture.html</code> opens in your browser. It's a single file that works offline, so you can commit it or share it.</p>
       </div>
     </div>
   </section>
 
-  <section class="summary" id="how" aria-label="How Loupe works">
-    <ul class="points">
-      <li>
-        <span class="pt-ic" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="24" height="24"><rect x="2.75" y="4.25" width="18.5" height="15.5" rx="3.5"/><path d="m7.25 9.75 2.75 2.25-2.75 2.25M12.5 14.25h4.25"/></svg>
-        </span>
-        <h2>One command, your own model.</h2>
-        <p>Run <code>npx @arjanj/loupe</code> in any git repo with your Claude Code, Anthropic, or OpenAI setup, or pass <code>&#8209;&#8209;model</code> in scripts.</p>
-      </li>
-      <li>
-        <span class="pt-ic" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="24" height="24"><circle cx="10.75" cy="10.75" r="6.75"/><path d="m15.75 15.75 5 5M8.75 9.25 7.25 10.75l1.5 1.5M12.75 9.25l1.5 1.5-1.5 1.5"/></svg>
-        </span>
-        <h2>Code facts, plain words.</h2>
-        <p>Static analysis traces imports, routes, queues, and datastores; your model explains modules and flows with <code>file:line</code> evidence.</p>
-      </li>
-      <li>
-        <span class="pt-ic" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="24" height="24"><path d="M6.25 3.25h7.25l5 5v10.5a1.75 1.75 0 0 1-1.75 1.75H6.25a1.75 1.75 0 0 1-1.75-1.75V5a1.75 1.75 0 0 1 1.75-1.75Z"/><path d="M13.5 3.25v5h5M8.25 13h7.5M8.25 16.5h4.75"/></svg>
-        </span>
-        <h2>One offline HTML file.</h2>
-        <p>Self&#8209;contained and opens in any browser with no server or network. Map multi&#8209;repo systems from a <a href="https://github.com/ArjanJ/loupe/blob/main/docs/manifest.md" rel="noopener">YAML manifest</a>.</p>
-      </li>
-    </ul>
+  <section class="band" id="key" aria-labelledby="key-title">
+    <div class="band-in split">
+      <div class="split-lead">
+        <h2 id="key-title">Connection types</h2>
+        <p class="lead-copy">Click a card to see its connections and the file and line each one comes from.</p>
+      </div>
+      <ul class="trace-list" aria-label="Connection types">
+        <li>
+          <span class="swatch sw-code" aria-hidden="true"><svg viewBox="0 0 44 12" width="44" height="12"><line x1="2" y1="6" x2="42" y2="6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle class="pkt" cx="2" cy="6" r="2.6"/></svg></span>
+          <span class="trace-name">Code</span>
+          <span class="trace-desc">One module imports another.</span>
+        </li>
+        <li>
+          <span class="swatch sw-http" aria-hidden="true"><svg viewBox="0 0 44 12" width="44" height="12"><line x1="2" y1="6" x2="42" y2="6" stroke="currentColor" stroke-width="1.8" stroke-dasharray="7 5" stroke-linecap="round"/><circle class="pkt" cx="2" cy="6" r="2.6"/></svg></span>
+          <span class="trace-name">HTTP</span>
+          <span class="trace-desc">A client calls an API route.</span>
+        </li>
+        <li>
+          <span class="swatch sw-data" aria-hidden="true"><svg viewBox="0 0 44 12" width="44" height="12"><line x1="2" y1="6" x2="42" y2="6" stroke="currentColor" stroke-width="1.7" stroke-dasharray="14 3.5" stroke-linecap="round"/><circle class="pkt" cx="2" cy="6" r="2.6"/></svg></span>
+          <span class="trace-name">Data</span>
+          <span class="trace-desc">Code reads or writes a database table.</span>
+        </li>
+        <li>
+          <span class="swatch sw-async" aria-hidden="true"><svg viewBox="0 0 44 12" width="44" height="12"><line x1="2" y1="6" x2="42" y2="6" stroke="currentColor" stroke-width="2.1" stroke-dasharray="0.1 5.5" stroke-linecap="round"/><circle class="pkt" cx="2" cy="6" r="2.6"/></svg></span>
+          <span class="trace-name">Async</span>
+          <span class="trace-desc">Work is handed off through a queue or event.</span>
+        </li>
+        <li>
+          <span class="swatch sw-ext" aria-hidden="true"><svg viewBox="0 0 44 12" width="44" height="12"><line x1="2" y1="6" x2="42" y2="6" stroke="currentColor" stroke-width="1.8" stroke-dasharray="10 4 1.5 4" stroke-linecap="round"/><circle class="pkt" cx="2" cy="6" r="2.6"/></svg></span>
+          <span class="trace-name">External</span>
+          <span class="trace-desc">A call to a third-party service, like Stripe or OpenAI.</span>
+        </li>
+      </ul>
+    </div>
   </section>
+
 </main>
 
 <footer class="foot">
   <div class="foot-in">
-    <p class="attrib">The Excalidraw demo is a map of the open-source <a href="https://github.com/excalidraw/excalidraw" rel="noopener">Excalidraw</a> repository (MIT, commit <code>2c3dcc0</code>), generated by Loupe. It contains no Excalidraw source files, only file paths and short quoted evidence lines, and is not affiliated with or endorsed by Excalidraw. Bramble is a fictional multi-repo example.</p>
     <div class="foot-row">
-      <p>Made by Arjan Jassal · <a href="LICENSE.txt">MIT License</a></p>
-      <ul>
+      <div class="foot-brand">
+        <a class="brand" href="#top" aria-label="Loupe, back to top">
+          <img src="favicon.svg" alt="" width="20" height="20">
+          <span>Loupe</span>
+        </a>
+        <p>v0.1.2 · Made by <a href="https://x.com/arjanjassal" rel="noopener">Arjan Jassal</a></p>
+      </div>
+      <ul class="foot-links">
         <li><a href="https://github.com/ArjanJ/loupe" rel="noopener">GitHub</a></li>
         <li><a href="https://www.npmjs.com/package/@arjanj/loupe" rel="noopener">npm</a></li>
+        <li><a href="LICENSE.txt">MIT License</a></li>
         <li><a href="THIRD_PARTY_NOTICES.txt">Third-party notices</a></li>
       </ul>
     </div>
+    <p class="attrib">The demo is a Loupe map of the open-source <a href="https://github.com/excalidraw/excalidraw" rel="noopener">Excalidraw</a> repo (MIT, commit <code>2c3dcc0</code>). It holds file paths and short quoted lines, not source files, and isn't affiliated with Excalidraw.</p>
   </div>
 </footer>
 <div class="sr" id="live" aria-live="polite"></div>

@@ -2,17 +2,9 @@
 (() => {
   const live = document.getElementById('live');
   const announce = (msg) => { live.textContent = ''; setTimeout(() => { live.textContent = msg; }, 30); };
-
-  // Promote entrance animation layers only while animating.
   const calm = matchMedia('(prefers-reduced-motion: reduce)').matches;
-  if (!calm) {
-    for (const el of document.querySelectorAll('.hero-in, .stage-wrap')) {
-      el.classList.add('will-anim');
-      el.addEventListener('animationend', () => el.classList.remove('will-anim'), { once: true });
-    }
-  }
 
-  // Copy button: Clipboard API where allowed (https, localhost), else hidden textarea + execCommand (file://, older browsers).
+  // Copy buttons: Clipboard API where allowed (https, localhost), else hidden textarea + execCommand (file://, older browsers).
   async function copyText(text) {
     try { if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; } } catch { /* fall through */ }
     const ta = Object.assign(document.createElement('textarea'), { value: text, readOnly: true });
@@ -43,10 +35,6 @@
     });
   }
 
-  // Demo tabs (WAI-ARIA tabs, automatic activation): arrows, Home and End move between tabs.
-  const tabs = [...document.querySelectorAll('[role="tab"]')];
-  const fullLink = document.getElementById('full-link');
-  const stage = document.getElementById('stage');
 
   // Demo maps. Same-origin only (served over http); from file:// the frames are opaque and stay as they are.
   const isHttp = location.protocol === 'http:' || location.protocol === 'https:';
@@ -102,110 +90,12 @@
     }
   }
 
-  function syncInspectorState() {
-    if (!stage) return;
-    const activePanel = stage.querySelector('.panel:not([hidden]) iframe');
-    const w = activePanel ? viewer(activePanel) : null;
-    let open = false;
-    try {
-      const insp = w && w.document.getElementById('insp');
-      open = !!(insp && insp.classList.contains('on'));
-    } catch { /* same-origin guard */ }
-    stage.classList.toggle('has-inspector', open);
-  }
-
-  function activatePanel(panel) {
-    if (!panel || panel.hidden) return;
-    scaleFrame(panel.querySelector('.frame'));
-    const frame = panel.querySelector('iframe');
-    if (!frame) return;
-    if (!frame.getAttribute('src') && frame.dataset.src) {
-      frame.setAttribute('src', frame.dataset.src);
-      return;
-    }
-    requestAnimationFrame(() => {
-      if (!isFrameSized(frame)) return;
-      const w = viewer(frame);
-      if (!w) return;
-      recoverCamera(frame, w);
-      watch(frame);
-      if (!frame.dataset.opened && frame.dataset.seen) deepen(frame);
-    });
-  }
-
-  function select(tab, focus) {
-    let activePanel = null;
-    for (const t of tabs) {
-      const on = t === tab;
-      t.setAttribute('aria-selected', String(on));
-      t.tabIndex = on ? 0 : -1;
-      const panel = document.getElementById(t.getAttribute('aria-controls'));
-      panel.hidden = !on;
-      if (on) activePanel = panel;
-    }
-    if (fullLink && tab.dataset.href) fullLink.setAttribute('href', tab.dataset.href);
-    activatePanel(activePanel);
-    syncInspectorState();
-    if (focus) tab.focus();
-  }
-  tabs.forEach((tab, i) => {
-    tab.addEventListener('click', () => select(tab));
-    tab.addEventListener('keydown', (e) => {
-      const n = tabs.length;
-      const to = { ArrowRight: i + 1, ArrowDown: i + 1, ArrowLeft: i - 1, ArrowUp: i - 1, Home: 0, End: n - 1 }[e.key];
-      if (to === undefined) return;
-      e.preventDefault();
-      select(tabs[(to + n) % n], true);
-    });
-  });
-
-  // Refine embedded viewer surface via CSSOM: match frame backdrop and calm the dot grid.
-  const styledDocs = new WeakSet();
-  function styleViewerSurface(frame) {
-    const w = viewer(frame);
-    if (!w) return;
-    try {
-      const doc = w.document;
-      const root = doc.documentElement;
-      const apply = () => {
-        const dark = root.getAttribute('data-theme') === 'dark';
-        const bg = dark ? '#141416' : '#fbfbfd';
-        const grad = dark
-          ? 'linear-gradient(180deg, #19191c 0%, #121214 100%)'
-          : 'linear-gradient(180deg, #ffffff 0%, #f8f8fa 100%)';
-        root.style.setProperty('--bg', bg);
-        root.style.background = bg;
-        if (doc.body) {
-          doc.body.style.background = bg;
-          doc.body.style.backgroundImage = grad;
-        }
-        // Calm the viewer's Freeform dot grid so the product frame feels crisp and quiet.
-        for (const id of ['grid0', 'grid1']) {
-          const g = doc.getElementById(id);
-          if (g) g.style.visibility = 'hidden';
-        }
-      };
-      apply();
-      if (!styledDocs.has(doc)) {
-        styledDocs.add(doc);
-        const mo = new MutationObserver(() => apply());
-        mo.observe(root, { attributes: true, attributeFilter: ['data-theme'] });
-        const insp = doc.getElementById('insp');
-        if (insp) {
-          const imo = new MutationObserver(() => syncInspectorState());
-          imo.observe(insp, { attributes: true, attributeFilter: ['class'] });
-        }
-      }
-    } catch { /* same-origin guard */ }
-  }
-
   // Open one level deeper than the viewer's first screen (one closed card), using the viewer's own level switcher.
   // Only once, only while the visitor hasn't moved the map yet, and without focusing anything or scrolling the page.
   const watchedDocs = new WeakSet();
   function watch(frame) {
     const w = viewer(frame);
     if (!w) return;
-    styleViewerSurface(frame);
     try {
       const doc = w.document;
       if (!watchedDocs.has(doc)) {
@@ -228,17 +118,14 @@
     watch(frame);
     const seg = [...w.document.querySelectorAll('#seg button')];
     if (seg.length < 2) return;
-    // Viewer marks the initial level pressed on its first animation frame; retry on next frame if not painted yet.
     if (!seg.some((b) => b.getAttribute('aria-pressed') === 'true')) {
       w.requestAnimationFrame(() => deepen(frame));
       return;
     }
-    // Visitor interaction is caught by the pointerdown/wheel/keydown listeners in watch(), which set dataset.opened.
-    // Don't infer it from camera movement: a resize or rotation while the map boots refits the camera too.
     frame.dataset.opened = '1';
     if (seg[0].getAttribute('aria-pressed') !== 'true') return;
     const sz = w.__sz, root = sz && sz.nodes && sz.nodes.find((n) => !n.parent);
-    if (calm && root) sz.fitNode(root.id, false); // no flight when motion is unwelcome
+    if (calm && root) sz.fitNode(root.id, false);
     else seg[1].click();
   }
   const seen = new IntersectionObserver((entries) => {
@@ -259,14 +146,49 @@
   });
   for (const frame of document.querySelectorAll('.frame')) fit.observe(frame);
 
-  // Subtle nav frost & hairline transition on scroll (seamless over the wash at y=0).
+  // Connection key: the swatches draw in and run one packet each, the first time the list scrolls into view.
+  // Lines are only hidden ("armed") once this script runs, so without JS or with reduced motion they're simply there.
+  const key = document.querySelector('.trace-list');
+  if (key && !calm) {
+    key.classList.add('armed');
+    const once = new IntersectionObserver(([e]) => {
+      if (!e.isIntersecting) return;
+      key.classList.add('in');
+      once.disconnect();
+    }, { threshold: 0.5 });
+    once.observe(key);
+  }
+
+  // Zoom handoff: one scroll-driven camera move from the hero into the map (see .intro in style.css).
+  // --z eases from 0 at the top to 1 once the frame's centre reaches the upper third of the viewport.
+  const intro = document.querySelector('.intro');
+  const grid = intro && intro.querySelector('.zoom-grid');
+  const stageEl = document.getElementById('stage');
+  if (grid && stageEl && !calm) {
+    let span = 1, raf = 0;
+    const measure = () => {
+      const ir = intro.getBoundingClientRect(), fr = stageEl.getBoundingClientRect();
+      const cy = fr.top + fr.height / 2 - ir.top;
+      intro.style.setProperty('--oy', `${cy}px`);
+      span = Math.max(1, ir.top + scrollY + cy - innerHeight / 3);
+    };
+    const paint = () => {
+      raf = 0;
+      const p = Math.min(1, Math.max(0, scrollY / span));
+      intro.style.setProperty('--z', (p * p * (3 - 2 * p)).toFixed(4));
+      intro.classList.toggle('moving', p > 0);
+    };
+    const queue = () => { if (!raf) raf = requestAnimationFrame(paint); };
+    measure(); paint();
+    intro.classList.add('zooming');
+    addEventListener('scroll', queue, { passive: true });
+    new ResizeObserver(() => { measure(); queue(); }).observe(intro);
+  }
+
+  // Nav frost transition on scroll.
   const nav = document.getElementById('nav');
   if (nav) {
-    const syncNav = () => {
-      const top = scrollY <= 4;
-      nav.classList.toggle('at-top', top);
-      nav.classList.toggle('scrolled', !top);
-    };
+    const syncNav = () => nav.classList.toggle('scrolled', scrollY > 4);
     syncNav();
     addEventListener('scroll', syncNav, { passive: true });
   }
