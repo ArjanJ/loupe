@@ -112,17 +112,17 @@ h1, h2, h3, p, pre, dl, dd { margin: 0; }
 }
 .skip:focus { top: 12px; text-decoration: none; }
 
-/* minimal hairline header */
+/* header: transparent at the top, frosted with a hairline once the page scrolls */
 .nav {
   position: sticky;
   top: 0;
   z-index: 50;
   background: var(--bg);
-  border-bottom: 1px solid var(--line-subtle);
+  border-bottom: 1px solid transparent;
   transition: border-color .2s var(--ease), background-color .2s var(--ease);
 }
 .nav.scrolled {
-  border-bottom-color: var(--line);
+  border-bottom-color: var(--line-subtle);
 }
 @supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
   .nav.scrolled {
@@ -134,49 +134,53 @@ h1, h2, h3, p, pre, dl, dd { margin: 0; }
 .nav-in {
   max-width: var(--stage-w);
   margin: 0 auto;
-  height: 50px;
+  height: 60px;
   padding: 0 var(--gutter);
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 20px;
 }
-.nav-left {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-}
 .brand {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
   color: var(--ink);
-  font: 600 15.5px/1 var(--display);
+  font: 600 16px/1 var(--display);
   letter-spacing: -0.02em;
 }
 .brand:hover { text-decoration: none; opacity: .8; }
-.brand img { display: block; border-radius: 5px; }
-.brand-meta {
-  font: 400 12px/1 var(--mono);
-  color: var(--ink-3);
-  padding-left: 12px;
-  border-left: 1px solid var(--line);
-}
+.brand img { display: block; border-radius: 6px; }
 .nav-links {
   display: flex;
   align-items: center;
-  gap: 22px;
+  gap: 18px;
 }
 .nav-text {
   color: var(--ink-2);
-  font-size: 13.5px;
-  font-weight: 400;
+  font: 500 14px/1 var(--sans);
   letter-spacing: -0.006em;
   transition: color .16s var(--ease);
   white-space: nowrap;
 }
 .nav-text:hover { color: var(--ink); text-decoration: none; }
+.nav-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 13px 0 11px;
+  border-radius: 8px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--ink);
+  font: 500 14px/1 var(--sans);
+  letter-spacing: -0.006em;
+  white-space: nowrap;
+  transition: background-color .16s var(--ease), border-color .16s var(--ease);
+}
+.nav-btn:hover { text-decoration: none; background: var(--surface-2); }
+.nav-btn .gh { fill: currentColor; flex: none; }
 
 /* centered editorial hero — balanced over the live map stage */
 .hero {
@@ -442,42 +446,8 @@ html.is-touch .veil svg {
   color: var(--ink-2);
 }
 .doc p + p,
-.code + p { margin-top: 14px; }
-.code {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 14px;
-  padding: 6px 6px 6px 16px;
-  border-radius: 12px;
-  border: 1px solid var(--line);
-  background: var(--surface);
-}
-.code pre { flex: 1; min-width: 0; overflow-x: auto; }
-.code code { font-size: 14px; }
-/* icon-only copy button; the hidden label still announces "Copied" */
-.code-copy {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: 34px;
-  height: 34px;
-  border: 0;
-  border-radius: 8px;
-  background: none;
-  color: var(--ink-3);
-  cursor: pointer;
-  transition: background-color .15s var(--ease), color .15s var(--ease);
-}
-.code-copy:hover { background: var(--surface-2); color: var(--ink); }
-.code-copy svg {
-  fill: none; stroke: currentColor; stroke-width: 1.5;
-  stroke-linecap: round; stroke-linejoin: round;
-}
-.code-copy .ic-check { display: none; }
-.code-copy.done { color: var(--btn-done); }
-.code-copy.done .ic-copy { display: none; }
-.code-copy.done .ic-check { display: block; }
+.doc .cmd + p { margin-top: 14px; }
+.doc .cmd { margin-top: 14px; }
 
 /* Reading the map — short intro beside the connection key */
 .split {
@@ -524,42 +494,46 @@ html.is-touch .veil svg {
   color: var(--ink-2);
 }
 
-/* quiet editorial footer */
+/* footer: one hairline, brand + links, small print below */
 .foot {
-  background: var(--surface-2);
-  border-top: 1px solid var(--line);
-  padding: 28px 0 36px;
-  font-size: 12px;
-  line-height: 1.65;
-  color: var(--ink-2);
+  padding: 0 var(--gutter) 48px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ink-3);
 }
 .foot-in {
-  max-width: var(--stage-w);
+  max-width: var(--content-w);
   margin: 0 auto;
-  padding: 0 var(--gutter);
+  padding-top: 32px;
+  border-top: 1px solid var(--line);
 }
-.attrib { max-width: 82em; }
 .foot-row {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 10px 24px;
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid var(--line-subtle);
+  gap: 20px 40px;
 }
-.foot ul {
+.foot-brand p { margin-top: 10px; }
+.foot-brand a { color: var(--ink-2); }
+.foot-brand a:hover { color: var(--ink); text-decoration: none; }
+.foot-links {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px 22px;
+  gap: 8px 24px;
   list-style: none;
   margin: 0;
   padding: 0;
 }
-.foot a { color: var(--ink-2); }
-.foot a:hover { color: var(--ink); text-decoration: underline; text-underline-offset: .2em; }
-.foot .attrib a { color: var(--accent); }
+.foot-links a { color: var(--ink-2); }
+.foot-links a:hover { color: var(--ink); text-decoration: none; }
+.attrib {
+  margin-top: 32px;
+  max-width: 72ch;
+  font-size: 12px;
+}
+.attrib a { color: var(--ink-2); text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: .2em; }
+.attrib a:hover { color: var(--ink); }
 
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
@@ -578,8 +552,7 @@ html.is-touch .veil svg {
 /* mobile */
 @media (max-width: 680px) {
   :root { --gutter: 16px; }
-  .nav-in { height: 48px; }
-  .brand-meta { display: none; }
+  .nav-in { height: 54px; }
   .nav-links { gap: 16px; }
 
   .hero { padding: 44px var(--gutter) 36px; }
@@ -609,8 +582,9 @@ html.is-touch .veil svg {
   }
   .trace-desc { grid-column: 2; }
 
-  .foot { padding: 24px 0 32px; }
-  .foot-row { flex-direction: column; align-items: flex-start; gap: 10px; }
+  .foot { padding-bottom: 36px; }
+  .foot-row { flex-direction: column; gap: 20px; }
+  .foot-links { gap: 8px 20px; }
 }
 
 @media (max-width: 359px) {

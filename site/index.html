@@ -32,16 +32,13 @@
 
 <header class="nav" id="nav">
   <div class="nav-in">
-    <div class="nav-left">
-      <a class="brand" href="#top" aria-label="Loupe, back to top">
-        <img src="favicon.svg" alt="" width="20" height="20">
-        <span>Loupe</span>
-      </a>
-      <span class="brand-meta" aria-hidden="true">v0.1.2 · MIT</span>
-    </div>
+    <a class="brand" href="#top" aria-label="Loupe, back to top">
+      <img src="favicon.svg" alt="" width="22" height="22">
+      <span>Loupe</span>
+    </a>
     <nav class="nav-links" aria-label="Primary">
-      <a class="nav-text" href="https://github.com/ArjanJ/loupe" rel="noopener">GitHub</a>
       <a class="nav-text" href="https://www.npmjs.com/package/@arjanj/loupe" rel="noopener">npm</a>
+      <a class="nav-btn" href="https://github.com/ArjanJ/loupe" rel="noopener"><svg class="gh" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg><span>GitHub</span></a>
     </nav>
   </div>
 </header>
@@ -91,12 +88,13 @@
       <h2 id="start-title">Getting started</h2>
       <div class="doc">
         <p>You need Node 18+ and git. In the root of any git repository, run:</p>
-        <div class="code">
-          <pre><code id="start-cmd">npx @arjanj/loupe</code></pre>
-          <button class="code-copy" type="button" data-copy="start-cmd" aria-label="Copy command" title="Copy">
-            <svg class="ic-copy" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><rect x="5.25" y="5.25" width="8" height="8" rx="1.5"/><path d="M10.75 5.25v-1.5a1.5 1.5 0 0 0-1.5-1.5h-5a1.5 1.5 0 0 0-1.5 1.5v5a1.5 1.5 0 0 0 1.5 1.5h1.5"/></svg>
-            <svg class="ic-check" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M3.25 8.5 6.5 11.75 12.75 4.75"/></svg>
-            <span class="copy-label sr">Copy</span>
+        <div class="cmd">
+          <span class="prompt" aria-hidden="true">$</span>
+          <code id="start-cmd">npx @arjanj/loupe</code>
+          <button class="copy" type="button" data-copy="start-cmd" aria-label="Copy command">
+            <svg class="ic-copy" viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><rect x="5.25" y="5.25" width="8" height="8" rx="1.5"/><path d="M10.75 5.25v-1.5a1.5 1.5 0 0 0-1.5-1.5h-5a1.5 1.5 0 0 0-1.5 1.5v5a1.5 1.5 0 0 0 1.5 1.5h1.5"/></svg>
+            <svg class="ic-check" viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M3.25 8.5 6.5 11.75 12.75 4.75"/></svg>
+            <span class="copy-label">Copy</span>
           </button>
         </div>
         <p>The first time, Loupe asks which model to use: Claude Code, an Anthropic API key, or an OpenAI API key. It saves the choice for that repo. Only short code excerpts are sent to the model.</p>
@@ -145,15 +143,22 @@
 
 <footer class="foot">
   <div class="foot-in">
-    <p class="attrib">The demo is a Loupe map of the open-source <a href="https://github.com/excalidraw/excalidraw" rel="noopener">Excalidraw</a> repo (MIT, commit <code>2c3dcc0</code>). It holds file paths and short quoted lines, not source files, and isn't affiliated with Excalidraw.</p>
     <div class="foot-row">
-      <p>Made by Arjan Jassal · <a href="LICENSE.txt">MIT License</a></p>
-      <ul>
+      <div class="foot-brand">
+        <a class="brand" href="#top" aria-label="Loupe, back to top">
+          <img src="favicon.svg" alt="" width="20" height="20">
+          <span>Loupe</span>
+        </a>
+        <p>v0.1.2 · Made by <a href="https://x.com/arjanjassal" rel="noopener">Arjan Jassal</a></p>
+      </div>
+      <ul class="foot-links">
         <li><a href="https://github.com/ArjanJ/loupe" rel="noopener">GitHub</a></li>
         <li><a href="https://www.npmjs.com/package/@arjanj/loupe" rel="noopener">npm</a></li>
+        <li><a href="LICENSE.txt">MIT License</a></li>
         <li><a href="THIRD_PARTY_NOTICES.txt">Third-party notices</a></li>
       </ul>
     </div>
+    <p class="attrib">The demo is a Loupe map of the open-source <a href="https://github.com/excalidraw/excalidraw" rel="noopener">Excalidraw</a> repo (MIT, commit <code>2c3dcc0</code>). It holds file paths and short quoted lines, not source files, and isn't affiliated with Excalidraw.</p>
   </div>
 </footer>
 <div class="sr" id="live" aria-live="polite"></div>
