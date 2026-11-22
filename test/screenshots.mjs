@@ -22,16 +22,16 @@ const settle = (p, ms = 900) => p.mouse.move(2, 2).then(() => p.waitForTimeout(m
 const center = async (p, id) => { const r = await p.evaluate((i) => window.__sz.rect(i), id); return [r.sx + r.sw / 2, r.sy + r.sh / 2]; };
 
 for (const scheme of ['light', 'dark']) {
-  // Excalidraw demo: overview, a package with its relationships, a flow
-  let p = await view('demo/excalidraw/excalidraw.html', scheme);
+  // Immich demo: overview, a package with its relationships, a flow
+  let p = await view('demo/immich/immich.html', scheme);
   await p.evaluate(() => window.__sz.fitNode('system', false)); await settle(p);
-  await shot(p, `excalidraw-overview-${scheme}.png`);
-  await p.evaluate(() => window.__sz.fitNode('pkg:packages/excalidraw', false)); await settle(p);
-  const [x, y] = await center(p, 'pkg:packages/excalidraw');
+  await shot(p, `immich-overview-${scheme}.png`);
+  await p.evaluate(() => window.__sz.fitNode('pkg:server', false)); await settle(p);
+  const [x, y] = await center(p, 'pkg:server');
   await p.mouse.move(x, y); await p.waitForTimeout(700);
-  await shot(p, `excalidraw-package-${scheme}.png`);
-  await p.evaluate(() => { const f = window.__sz.flows().find((f) => /collab/i.test(f.title)) || window.__sz.flows()[0]; window.__sz.playFlow(f.id, 3, 0.6); }); await p.waitForTimeout(1600);
-  await shot(p, `excalidraw-flow-${scheme}.png`);
+  await shot(p, `immich-package-${scheme}.png`);
+  await p.evaluate(() => { const f = window.__sz.flows().find((f) => /upload/i.test(f.title)) || window.__sz.flows()[0]; window.__sz.playFlow(f.id, 3, 0.6); }); await p.waitForTimeout(1600);
+  await shot(p, `immich-flow-${scheme}.png`);
   await p.close();
   // Bramble (fictional) system manifest: statuses, inspector
   p = await view('examples/bramble/bramble.html', scheme);
