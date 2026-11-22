@@ -2,7 +2,7 @@
 
 Loupe turns a codebase into a zoomable architecture map: a single HTML file you can open offline.
 
-**[Live demo](arjanj.github.io/loupe/demos/immich.html)**
+**[Live demo](https://arjanj.github.io/loupe/demos/immich.html)**
 
 ![The Immich repo in Loupe](docs/screenshots/immich-overview-light.png)
 
