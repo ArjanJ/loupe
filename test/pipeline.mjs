@@ -541,6 +541,45 @@ try {
     check(/uses run/.test(edge('main.go', 'run.go')?.label || ''), 'go imports: same-package references between files', dump);
   }
 
+  // ---------- Java + PHP + Rust import relations ----------
+  {
+    const jr = join(TMP, 'java-php-rust-imports');
+    const write = (rel, content) => { const full = join(jr, rel); mkdirSync(dirname(full), { recursive: true }); writeFileSync(full, content); };
+    const J = 'src/main/java/com/acme';
+    write(`${J}/model/User.java`, 'package com.acme.model;\n\npublic class User {}\n');
+    write(`${J}/repo/UserRepo.java`, 'package com.acme.repo;\n\npublic interface UserRepo {}\n');
+    write(`${J}/repo/Unused.java`, 'package com.acme.repo;\n\npublic class Unused {}\n');
+    write(`${J}/web/Helper.java`, 'package com.acme.web;\n\nclass Helper {}\n');
+    write(`${J}/web/UserController.java`, 'package com.acme.web;\n\nimport com.acme.model.User;\nimport com.acme.repo.*;\n\n/**\n * Unused is mentioned only in this comment.\n */\npublic class UserController {\n  private UserRepo repo;\n  private Helper helper;\n  private User user;\n}\n');
+    write('php/Http/Route.php', '<?php\nnamespace App\\Http;\n\nfinal class Route {}\n');
+    write('php/Http/Router.php', '<?php\nnamespace App\\Http;\n\nclass Router\n{\n    public function add(): Route { return new Route(); }\n}\n');
+    write('php/Support/Str.php', '<?php\nnamespace App\\Support;\n\nclass Str {}\n');
+    write('php/Support/Arr.php', '<?php\nnamespace App\\Support;\n\nclass Arr {}\n');
+    write('php/App.php', '<?php\nnamespace App;\n\nuse App\\Http\\Router;\nuse App\\Support\\{Str, Arr as A};\n\nclass App\n{\n    public function run(): Router { return new Router(); }\n}\n');
+    write('crates/core/Cargo.toml', '[package]\nauthors = ["t"]\nname = "core-lib"\nversion = "0.1.0"\n');
+    write('crates/core/src/lib.rs', 'pub mod parser;\npub mod util;\n\npub use parser::Parser;\n');
+    write('crates/core/src/parser.rs', "use crate::util::{trim, Pad as P};\n\npub struct Parser;\n\npub fn parse<'a>(s: &'a str) -> &'a str { let _p = P; super::util::trim(s) }\n");
+    write('crates/core/src/util.rs', 'pub fn trim(s: &str) -> &str { s }\npub struct Pad;\n');
+    write('crates/core/src/bin/tool.rs', 'use core_lib::Parser;\n\nfn main() { let _ = Parser; }\n');
+    const g = (...a) => execFileSync(gitBin, a, { cwd: jr, stdio: 'pipe' });
+    g('init', '-q'); g('add', '-A'); g('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'init');
+    r = await run(['map', jr, '--no-open', '--backend', 'openai'], stEnv);
+    const t = existsSync(join(jr, '.loupe', 'tree.json')) ? JSON.parse(readFileSync(join(jr, '.loupe', 'tree.json'), 'utf8')) : { root: {} };
+    const fm = existsSync(join(jr, '.loupe', 'tree.files.json')) ? JSON.parse(readFileSync(join(jr, '.loupe', 'tree.files.json'), 'utf8')) : {};
+    const rels = t.root.relations || [];
+    const edge = (a, b) => rels.find((x) => x.kind === 'import' && x.from === fm[a] && x.to === fm[b]);
+    const dump = JSON.stringify(rels.map((x) => [x.from, x.to, x.label]));
+    const ctl = `${J}/web/UserController.java`;
+    // small files can share a `more:` node, so check each relation's detail labels rather than its target
+    const uses = (from, sym) => rels.some((x) => x.kind === 'import' && x.from === fm[from] && (x.details || []).some((d) => new RegExp(`\\b${sym}\\b`).test(d)));
+    check(r.code === 0 && uses(ctl, 'User') && uses(ctl, 'UserRepo') && !rels.some((x) => (x.details || []).some((d) => /Unused/.test(d))), 'java imports: single-type and wildcard imports resolve to used types only', dump);
+    check(uses(ctl, 'Helper'), 'java imports: same-package types used without an import', dump);
+    check(edge('php/App.php', 'php/Http/Router.php') && edge('php/App.php', 'php/Support/Str.php') && /uses Arr/.test(edge('php/App.php', 'php/Support/Arr.php')?.label || ''), 'php imports: use and group use (with alias) resolve by namespace', dump);
+    check(/uses Route/.test(edge('php/Http/Router.php', 'php/Http/Route.php')?.label || ''), 'php imports: same-namespace classes used without use', dump);
+    check(/uses trim, Pad/.test(edge('crates/core/src/parser.rs', 'crates/core/src/util.rs')?.label || '') && /uses Parser/.test(edge('crates/core/src/lib.rs', 'crates/core/src/parser.rs')?.label || ''), 'rust imports: crate:: use trees and self-relative re-exports resolve to module files', dump);
+    check(/uses Parser/.test(edge('crates/core/src/bin/tool.rs', 'crates/core/src/lib.rs')?.label || ''), 'rust imports: a bin target reaches the library through its crate name (dashes as underscores)', dump);
+  }
+
   // ---------- skip vendored, build, generated, gitignored, .gitattributes & minified files (with re-include) ----------
   {
     const vend = join(TMP, 'vendored-repo');
