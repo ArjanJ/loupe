@@ -6,8 +6,8 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; frame-src 'self'; base-uri 'none'; form-action 'none'">
 <meta name="referrer" content="strict-origin-when-cross-origin">
 <meta name="color-scheme" content="light dark">
-<meta name="theme-color" content="#fbfbfd" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#07070b" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f6f6f4" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f0f11" media="(prefers-color-scheme: dark)">
 <title>Loupe — Zoomable architecture maps for codebases</title>
 <meta name="description" content="Zoomable architecture maps for codebases and multi-repo systems. One self-contained offline HTML file, typed connections with file:line evidence, and your own model.">
 <meta property="og:type" content="website">
@@ -18,7 +18,7 @@
 <meta property="og:image" content="https://arjanj.github.io/loupe/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="Loupe landing page: the headline See your codebase. above a live zoomable architecture map of the Excalidraw repo">
+<meta property="og:image:alt" content="Loupe landing page showing a live zoomable architecture map of the Excalidraw repository">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:image" content="https://arjanj.github.io/loupe/og.png">
 <meta name="twitter:title" content="Loupe — Zoomable architecture maps">
@@ -28,19 +28,24 @@
 <script src="site.js" defer></script>
 </head>
 <body id="top">
-<div class="bg-wash" aria-hidden="true"></div>
 <a class="skip" href="#main">Skip to content</a>
 
-<header class="nav at-top" id="nav">
+<header class="nav" id="nav">
   <div class="nav-in">
-    <a class="brand" href="#top" aria-label="Loupe, back to top">
-      <img src="favicon.svg" alt="" width="20" height="20">
-      <span>Loupe</span>
-    </a>
+    <div class="nav-left">
+      <a class="brand" href="#top" aria-label="Loupe, back to top">
+        <img src="favicon.svg" alt="" width="20" height="20">
+        <span>Loupe</span>
+      </a>
+      <span class="brand-meta" aria-hidden="true">v0.1.2 · MIT</span>
+    </div>
     <nav class="nav-links" aria-label="Primary">
+      <a class="nav-text nav-sec" href="#how">Pipeline</a>
+      <a class="nav-text nav-sec" href="#traces">Detectors</a>
+      <a class="nav-text nav-sec" href="#usage">Usage</a>
+      <span class="nav-sep" aria-hidden="true"></span>
       <a class="nav-text" href="https://github.com/ArjanJ/loupe" rel="noopener">GitHub</a>
       <a class="nav-text" href="https://www.npmjs.com/package/@arjanj/loupe" rel="noopener">npm</a>
-      <a class="nav-pill" href="#how">Get started</a>
     </nav>
   </div>
 </header>
@@ -48,19 +53,19 @@
 <main id="main">
   <section class="hero" aria-labelledby="hero-title">
     <div class="hero-in">
-      <h1 id="hero-title">See your codebase.</h1>
-      <p class="sub">Zoomable architecture maps for codebases and multi&#8209;repo systems. One offline HTML file.</p>
+      <h1 id="hero-title">Zoomable architecture maps for any codebase</h1>
+      <p class="sub">Static analysis and your own model, compiled into one offline HTML file with typed links and <code>file:line</code> evidence.</p>
       <div class="hero-act">
         <div class="cmd">
           <span class="prompt" aria-hidden="true">$</span>
           <code id="cmd-text">npx @arjanj/loupe</code>
           <button class="copy" type="button" data-copy="cmd-text" aria-label="Copy command">
-            <svg class="ic-copy" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><rect x="5.25" y="5.25" width="8" height="8" rx="2"/><path d="M10.75 5.25v-1.5a1.5 1.5 0 0 0-1.5-1.5h-5a1.5 1.5 0 0 0-1.5 1.5v5a1.5 1.5 0 0 0 1.5 1.5h1.5"/></svg>
-            <svg class="ic-check" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3.25 8.5 6.5 11.75 12.75 4.75"/></svg>
+            <svg class="ic-copy" viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><rect x="5.25" y="5.25" width="8" height="8" rx="1.5"/><path d="M10.75 5.25v-1.5a1.5 1.5 0 0 0-1.5-1.5h-5a1.5 1.5 0 0 0-1.5 1.5v5a1.5 1.5 0 0 0 1.5 1.5h1.5"/></svg>
+            <svg class="ic-check" viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M3.25 8.5 6.5 11.75 12.75 4.75"/></svg>
             <span class="copy-label">Copy</span>
           </button>
         </div>
-        <a class="hero-link" href="https://github.com/ArjanJ/loupe" rel="noopener">View on GitHub <span aria-hidden="true">›</span></a>
+        <a class="hero-link" href="https://github.com/ArjanJ/loupe" rel="noopener">View on GitHub <span aria-hidden="true">↗</span></a>
       </div>
     </div>
   </section>
@@ -71,7 +76,7 @@
         <div class="panel" role="tabpanel" id="panel-excalidraw" aria-labelledby="tab-excalidraw">
           <div class="frame">
             <button class="veil" type="button" aria-label="Tap to explore the Excalidraw map">
-              <span><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M6.5 13.5 3.3 10.2a1.3 1.3 0 0 1 1.9-1.8l1.3 1.3V4a1.25 1.25 0 0 1 2.5 0v3.5l3.1.6a1.6 1.6 0 0 1 1.3 1.8l-.5 3.6"/></svg>Tap to explore</span>
+              <span><svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M6.5 13.5 3.3 10.2a1.3 1.3 0 0 1 1.9-1.8l1.3 1.3V4a1.25 1.25 0 0 1 2.5 0v3.5l3.1.6a1.6 1.6 0 0 1 1.3 1.8l-.5 3.6"/></svg>Tap to explore</span>
             </button>
             <iframe src="demos/excalidraw.html" title="Interactive Loupe map of the Excalidraw repository" tabindex="-1"></iframe>
           </div>
@@ -79,7 +84,7 @@
         <div class="panel" role="tabpanel" id="panel-bramble" aria-labelledby="tab-bramble" hidden>
           <div class="frame">
             <button class="veil" type="button" aria-label="Tap to explore the Bramble map">
-              <span><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M6.5 13.5 3.3 10.2a1.3 1.3 0 0 1 1.9-1.8l1.3 1.3V4a1.25 1.25 0 0 1 2.5 0v3.5l3.1.6a1.6 1.6 0 0 1 1.3 1.8l-.5 3.6"/></svg>Tap to explore</span>
+              <span><svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M6.5 13.5 3.3 10.2a1.3 1.3 0 0 1 1.9-1.8l1.3 1.3V4a1.25 1.25 0 0 1 2.5 0v3.5l3.1.6a1.6 1.6 0 0 1 1.3 1.8l-.5 3.6"/></svg>Tap to explore</span>
             </button>
             <!-- Bramble loads via data-src on first tab switch; never loading="lazy": a lazy iframe in a hidden panel gets a skewed rAF timeline that breaks the viewer's fly animation (blank map, see #16) -->
             <iframe data-src="demos/bramble.html" title="Interactive Loupe map of Bramble, a fictional multi-repo system" tabindex="-1"></iframe>
@@ -88,52 +93,182 @@
 
         <div class="stage-controls">
           <div class="tabs" role="tablist" aria-label="Demo maps">
-            <button type="button" role="tab" id="tab-excalidraw" aria-controls="panel-excalidraw" aria-selected="true" data-href="demos/excalidraw.html">
+            <button type="button" role="tab" id="tab-excalidraw" aria-controls="panel-excalidraw" aria-selected="true" data-href="demos/excalidraw.html" data-meta="Excalidraw · 9 packages · commit 2c3dcc0">
               Excalidraw <span class="tab-kind">repo</span>
             </button>
-            <button type="button" role="tab" id="tab-bramble" aria-controls="panel-bramble" aria-selected="false" tabindex="-1" data-href="demos/bramble.html">
+            <button type="button" role="tab" id="tab-bramble" aria-controls="panel-bramble" aria-selected="false" tabindex="-1" data-href="demos/bramble.html" data-meta="Bramble · 9 services · multi-repo manifest">
               Bramble <span class="tab-kind">multi&#8209;repo</span>
             </button>
           </div>
           <a class="full" id="full-link" href="demos/excalidraw.html" target="_blank" rel="noopener" title="Open full screen">
-            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5 9.25 6.75M2.5 13.5l4.25-4.25"/></svg>
+            <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5 9.25 6.75M2.5 13.5l4.25-4.25"/></svg>
             <span class="full-label">Full screen</span>
             <span class="sr">Open full screen (opens in a new tab)</span>
           </a>
         </div>
       </div>
 
-      <div class="stage-hint">
-        <p class="hint fine">Scroll to zoom · Click a card to inspect</p>
+      <div class="stage-meta">
+        <p class="hint fine">Scroll to zoom · Drag to pan · Click a card to inspect connections &amp; evidence</p>
         <p class="hint touch">Pinch to zoom · Tap a card to inspect</p>
+        <p class="specimen-meta" id="specimen-meta">Excalidraw · 9 packages · commit 2c3dcc0</p>
       </div>
     </div>
   </section>
 
-  <section class="summary" id="how" aria-label="How Loupe works">
-    <ul class="points">
-      <li>
-        <span class="pt-ic" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="24" height="24"><rect x="2.75" y="4.25" width="18.5" height="15.5" rx="3.5"/><path d="m7.25 9.75 2.75 2.25-2.75 2.25M12.5 14.25h4.25"/></svg>
-        </span>
-        <h2>One command, your own model.</h2>
-        <p>Run <code>npx @arjanj/loupe</code> in any git repo with your Claude Code, Anthropic, or OpenAI setup, or pass <code>&#8209;&#8209;model</code> in scripts.</p>
-      </li>
-      <li>
-        <span class="pt-ic" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="24" height="24"><circle cx="10.75" cy="10.75" r="6.75"/><path d="m15.75 15.75 5 5M8.75 9.25 7.25 10.75l1.5 1.5M12.75 9.25l1.5 1.5-1.5 1.5"/></svg>
-        </span>
-        <h2>Code facts, plain words.</h2>
-        <p>Static analysis traces imports, routes, queues, and datastores; your model explains modules and flows with <code>file:line</code> evidence.</p>
-      </li>
-      <li>
-        <span class="pt-ic" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="24" height="24"><path d="M6.25 3.25h7.25l5 5v10.5a1.75 1.75 0 0 1-1.75 1.75H6.25a1.75 1.75 0 0 1-1.75-1.75V5a1.75 1.75 0 0 1 1.75-1.75Z"/><path d="M13.5 3.25v5h5M8.25 13h7.5M8.25 16.5h4.75"/></svg>
-        </span>
-        <h2>One offline HTML file.</h2>
-        <p>Self&#8209;contained and opens in any browser with no server or network. Map multi&#8209;repo systems from a <a href="https://github.com/ArjanJ/loupe/blob/main/docs/manifest.md" rel="noopener">YAML manifest</a>.</p>
-      </li>
-    </ul>
+  <section class="band" id="how" aria-labelledby="how-title">
+    <div class="band-in">
+      <div class="band-head">
+        <p class="kicker">01 / Pipeline</p>
+        <h2 id="how-title">Three stages, local to your machine</h2>
+      </div>
+      <ol class="pipeline">
+        <li>
+          <div class="step-top">
+            <span class="step-num">01</span>
+            <code class="step-cmd">loupe scan</code>
+          </div>
+          <h3>Index structure &amp; write summaries</h3>
+          <p>Walks tracked git files, skips <code>.gitignore</code> and common secret paths, groups files into packages and modules, and asks your chosen model for plain-English summaries. Cached by prompt and content hash in <code>.loupe/cache/</code>.</p>
+        </li>
+        <li>
+          <div class="step-top">
+            <span class="step-num">02</span>
+            <code class="step-cmd">loupe relations</code>
+          </div>
+          <h3>Extract static edges &amp; flows</h3>
+          <p>Deterministic detectors trace imports, HTTP routes, database queries, queues, and third-party SDKs directly from source. Your model labels rolled-up edges and proposes guided flows, with every link anchored to <code>file:line</code>.</p>
+        </li>
+        <li>
+          <div class="step-top">
+            <span class="step-num">03</span>
+            <code class="step-cmd">loupe render</code>
+          </div>
+          <h3>Emit one self-contained HTML file</h3>
+          <p>Bundles the canvas viewer, fonts, and layout into a single <code>architecture.html</code> enforced by a strict <code>default-src 'none'</code> CSP. Open it straight from disk, commit it to docs, or attach it to a pull request.</p>
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="band" id="traces" aria-labelledby="traces-title">
+    <div class="band-in split">
+      <div class="split-lead">
+        <p class="kicker">02 / Static detectors</p>
+        <h2 id="traces-title">Grounded in source, not guesswork</h2>
+        <p class="lead-copy">Structural scanning covers 19 languages, including TypeScript, Python, Go, Rust, Ruby, Java, Kotlin, and Swift. Deep relation detectors currently focus on JS/TS, Prisma, and SQL, matching each connection type to its own line style on the map.</p>
+      </div>
+      <ul class="trace-list" aria-label="Detected connection types">
+        <li>
+          <span class="swatch" aria-hidden="true">
+            <svg viewBox="0 0 44 12" width="44" height="12"><line x1="2" y1="6" x2="42" y2="6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          </span>
+          <span class="trace-name">Code</span>
+          <span class="trace-desc">Runtime imports across files, workspace packages, and <code>@/</code> aliases; type-only imports skipped.</span>
+        </li>
+        <li>
+          <span class="swatch" aria-hidden="true">
+            <svg viewBox="0 0 44 12" width="44" height="12"><line x1="2" y1="6" x2="42" y2="6" stroke="currentColor" stroke-width="1.8" stroke-dasharray="7 5" stroke-linecap="round"/></svg>
+          </span>
+          <span class="trace-name">HTTP</span>
+          <span class="trace-desc">Express, Fastify, Hono, Koa, and Next.js routes matched to <code>fetch</code>, <code>axios</code>, and <code>ky</code> callers.</span>
+        </li>
+        <li>
+          <span class="swatch" aria-hidden="true">
+            <svg viewBox="0 0 44 12" width="44" height="12"><line x1="2" y1="6" x2="42" y2="6" stroke="currentColor" stroke-width="1.7" stroke-dasharray="14 3.5" stroke-linecap="round"/></svg>
+          </span>
+          <span class="trace-name">Data</span>
+          <span class="trace-desc">Prisma model reads and writes, plus Drizzle table queries.</span>
+        </li>
+        <li>
+          <span class="swatch" aria-hidden="true">
+            <svg viewBox="0 0 44 12" width="44" height="12"><line x1="2" y1="6" x2="42" y2="6" stroke="currentColor" stroke-width="2.1" stroke-dasharray="0.1 5.5" stroke-linecap="round"/></svg>
+          </span>
+          <span class="trace-name">Async</span>
+          <span class="trace-desc">BullMQ, pg-boss, Inngest, pub/sub channels, and web workers.</span>
+        </li>
+        <li>
+          <span class="swatch" aria-hidden="true">
+            <svg viewBox="0 0 44 12" width="44" height="12"><line x1="2" y1="6" x2="42" y2="6" stroke="currentColor" stroke-width="1.8" stroke-dasharray="10 4 1.5 4" stroke-linecap="round"/></svg>
+          </span>
+          <span class="trace-name">External</span>
+          <span class="trace-desc">Stripe, GitHub, Slack, OpenAI, Anthropic, AWS, GCP, Firebase, Supabase, Sentry, literal hosts, <code>*_URL</code>, and <code>/webhook</code> routes.</span>
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="band" id="usage" aria-labelledby="usage-title">
+    <div class="band-in">
+      <div class="band-head">
+        <p class="kicker">03 / Usage</p>
+        <h2 id="usage-title">Two ways to build a map</h2>
+      </div>
+      <div class="modes">
+        <div class="mode">
+          <div class="step-top">
+            <span class="step-num">Single repository</span>
+            <code class="step-cmd">git repo → HTML</code>
+          </div>
+          <h3>Point Loupe at any codebase</h3>
+          <p>Run one command inside any git repository. Loupe prompts you to pick from the models available on your machine, remembers your choice in <code>.loupe/config.json</code>, writes <code>architecture.html</code>, and opens it in your browser.</p>
+          <div class="code-box">
+            <div class="code-head">
+              <span class="code-label">Terminal</span>
+              <button class="code-copy" type="button" data-copy="cli-snippet" aria-label="Copy CLI snippet">
+                <span class="copy-label">Copy</span>
+              </button>
+            </div>
+            <pre><code id="cli-snippet">cd your-app
+npx @arjanj/loupe
+
+<span class="tok-c"># or pass a backend / output path in scripts &amp; CI</span>
+npx @arjanj/loupe <span class="tok-k">--backend</span> claude <span class="tok-k">--model</span> sonnet <span class="tok-k">--out</span> docs/architecture.html</code></pre>
+          </div>
+        </div>
+
+        <div class="mode">
+          <div class="step-top">
+            <span class="step-num">Multi-repo system</span>
+            <code class="step-cmd">manifest.yaml → HTML</code>
+          </div>
+          <h3>Describe services across repositories</h3>
+          <p>When an architecture spans multiple repos, declare services, datastores, calls, and lifecycle status (<code>built</code>, <code>branch</code>, <code>proposed</code>, <code>planned</code>) in a YAML manifest. Renders directly with no model calls required.</p>
+          <div class="code-box">
+            <div class="code-head">
+              <span class="code-label">manifest.yaml</span>
+              <a class="code-link" href="https://github.com/ArjanJ/loupe/blob/main/docs/manifest.md" rel="noopener">Manifest schema <span aria-hidden="true">↗</span></a>
+            </div>
+            <pre><code><span class="tok-k">services:</span>
+  - <span class="tok-k">id:</span> storefront
+    <span class="tok-k">repo:</span> bramble/storefront
+    <span class="tok-k">calls:</span>
+      - { <span class="tok-k">to:</span> orders-api, <span class="tok-k">via:</span> http, <span class="tok-k">what:</span> places orders }
+  - <span class="tok-k">id:</span> mobile-app
+    <span class="tok-k">calls:</span>
+      - { <span class="tok-k">to:</span> dispatch, <span class="tok-k">via:</span> websocket, <span class="tok-k">status:</span> branch }</code></pre>
+          </div>
+          <div class="mode-links">
+            <button class="text-btn" type="button" data-switch-tab="tab-bramble">Explore the Bramble manifest map above <span aria-hidden="true">↑</span></button>
+          </div>
+        </div>
+      </div>
+
+      <dl class="specs">
+        <div>
+          <dt>Requirements &amp; models</dt>
+          <dd>Node 18+ and <code>git</code>. Works with Claude Code (<code>claude</code> on your <code>PATH</code>), <code>ANTHROPIC_API_KEY</code>, or <code>OPENAI_API_KEY</code>.</dd>
+        </div>
+        <div>
+          <dt>Incremental cache</dt>
+          <dd>Model responses are cached in <code>.loupe/cache/</code> by prompt and file content hash, so reruns only pay for files that changed.</dd>
+        </div>
+        <div>
+          <dt>Security &amp; privacy</dt>
+          <dd>Nothing leaves your machine except excerpts sent to your model. Secret files (<code>.env*</code>, <code>*.pem</code>) are skipped and tokens are redacted.</dd>
+        </div>
+      </dl>
+    </div>
   </section>
 </main>
 

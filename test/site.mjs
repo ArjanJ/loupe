@@ -252,8 +252,6 @@ try {
     check(geom.top <= 400, `1280px: frame starts at y=${geom.top}px (expected <= 400px)`);
     check(Math.abs(geom.aspect - 1.6) <= 0.05, `1280px: frame aspect ratio is ${geom.aspect.toFixed(3)} (${geom.w}x${geom.h}, expected 1.6 ±0.05)`);
     check(geom.ratio >= 0.40, `1280px: frame covers only ${(geom.ratio * 100).toFixed(1)}% of first viewport (expected >= 40%)`);
-    const washAnim = await page.evaluate(() => getComputedStyle(document.querySelector('.bg-wash'), '::before').animationName);
-    check(washAnim === 'none', `1280px reduced-motion: wash animation should be none, got ${washAnim}`);
     const ex = await mapReady(page, 'excalidraw');
     check(ex && await opened(ex), '1280px reduced-motion: Excalidraw did not open a level deeper');
     await checkMapRendered(ex, '1280px reduced-motion Excalidraw');
@@ -408,8 +406,6 @@ try {
   }
   const shown = (sel) => page.evaluate((s) => getComputedStyle(document.querySelector(s)).display !== 'none', sel);
   check(await shown('.hint.touch') && !(await shown('.hint.fine')), 'touch hint not shown on a touch screen');
-  const mobileWashAnim = await page.evaluate(() => getComputedStyle(document.querySelector('.bg-wash'), '::before').animationName);
-  check(mobileWashAnim === 'none', `phone: wash animation should be static (none), got ${mobileWashAnim}`);
   const fx = await mapReady(page, 'excalidraw');
   check(fx && await opened(fx), 'phone: Excalidraw map did not open a level deeper');
   if (fx) {

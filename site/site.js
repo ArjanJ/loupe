@@ -2,17 +2,9 @@
 (() => {
   const live = document.getElementById('live');
   const announce = (msg) => { live.textContent = ''; setTimeout(() => { live.textContent = msg; }, 30); };
-
-  // Promote entrance animation layers only while animating.
   const calm = matchMedia('(prefers-reduced-motion: reduce)').matches;
-  if (!calm) {
-    for (const el of document.querySelectorAll('.hero-in, .stage-wrap')) {
-      el.classList.add('will-anim');
-      el.addEventListener('animationend', () => el.classList.remove('will-anim'), { once: true });
-    }
-  }
 
-  // Copy button: Clipboard API where allowed (https, localhost), else hidden textarea + execCommand (file://, older browsers).
+  // Copy buttons: Clipboard API where allowed (https, localhost), else hidden textarea + execCommand (file://, older browsers).
   async function copyText(text) {
     try { if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; } } catch { /* fall through */ }
     const ta = Object.assign(document.createElement('textarea'), { value: text, readOnly: true });
@@ -46,6 +38,7 @@
   // Demo tabs (WAI-ARIA tabs, automatic activation): arrows, Home and End move between tabs.
   const tabs = [...document.querySelectorAll('[role="tab"]')];
   const fullLink = document.getElementById('full-link');
+  const specimenMeta = document.getElementById('specimen-meta');
   const stage = document.getElementById('stage');
 
   // Demo maps. Same-origin only (served over http); from file:// the frames are opaque and stay as they are.
@@ -144,6 +137,7 @@
       if (on) activePanel = panel;
     }
     if (fullLink && tab.dataset.href) fullLink.setAttribute('href', tab.dataset.href);
+    if (specimenMeta && tab.dataset.meta) specimenMeta.textContent = tab.dataset.meta;
     activatePanel(activePanel);
     syncInspectorState();
     if (focus) tab.focus();
@@ -159,7 +153,17 @@
     });
   });
 
-  // Refine embedded viewer surface via CSSOM: match frame backdrop and calm the dot grid.
+  // In-page shortcuts to switch demo tab and scroll back to the stage.
+  for (const btn of document.querySelectorAll('[data-switch-tab]')) {
+    btn.addEventListener('click', () => {
+      const tab = document.getElementById(btn.dataset.switchTab);
+      if (!tab) return;
+      select(tab);
+      document.getElementById('demo')?.scrollIntoView({ behavior: calm ? 'auto' : 'smooth', block: 'start' });
+    });
+  }
+
+  // Match embedded viewer surface to the specimen frame and calm the dot grid.
   const styledDocs = new WeakSet();
   function styleViewerSurface(frame) {
     const w = viewer(frame);
@@ -169,17 +173,13 @@
       const root = doc.documentElement;
       const apply = () => {
         const dark = root.getAttribute('data-theme') === 'dark';
-        const bg = dark ? '#141416' : '#fbfbfd';
-        const grad = dark
-          ? 'linear-gradient(180deg, #19191c 0%, #121214 100%)'
-          : 'linear-gradient(180deg, #ffffff 0%, #f8f8fa 100%)';
+        const bg = dark ? '#161618' : '#ffffff';
         root.style.setProperty('--bg', bg);
         root.style.background = bg;
         if (doc.body) {
           doc.body.style.background = bg;
-          doc.body.style.backgroundImage = grad;
+          doc.body.style.backgroundImage = 'none';
         }
-        // Calm the viewer's Freeform dot grid so the product frame feels crisp and quiet.
         for (const id of ['grid0', 'grid1']) {
           const g = doc.getElementById(id);
           if (g) g.style.visibility = 'hidden';
@@ -228,17 +228,14 @@
     watch(frame);
     const seg = [...w.document.querySelectorAll('#seg button')];
     if (seg.length < 2) return;
-    // Viewer marks the initial level pressed on its first animation frame; retry on next frame if not painted yet.
     if (!seg.some((b) => b.getAttribute('aria-pressed') === 'true')) {
       w.requestAnimationFrame(() => deepen(frame));
       return;
     }
-    // Visitor interaction is caught by the pointerdown/wheel/keydown listeners in watch(), which set dataset.opened.
-    // Don't infer it from camera movement: a resize or rotation while the map boots refits the camera too.
     frame.dataset.opened = '1';
     if (seg[0].getAttribute('aria-pressed') !== 'true') return;
     const sz = w.__sz, root = sz && sz.nodes && sz.nodes.find((n) => !n.parent);
-    if (calm && root) sz.fitNode(root.id, false); // no flight when motion is unwelcome
+    if (calm && root) sz.fitNode(root.id, false);
     else seg[1].click();
   }
   const seen = new IntersectionObserver((entries) => {
@@ -259,14 +256,10 @@
   });
   for (const frame of document.querySelectorAll('.frame')) fit.observe(frame);
 
-  // Subtle nav frost & hairline transition on scroll (seamless over the wash at y=0).
+  // Nav frost transition on scroll.
   const nav = document.getElementById('nav');
   if (nav) {
-    const syncNav = () => {
-      const top = scrollY <= 4;
-      nav.classList.toggle('at-top', top);
-      nav.classList.toggle('scrolled', !top);
-    };
+    const syncNav = () => nav.classList.toggle('scrolled', scrollY > 4);
     syncNav();
     addEventListener('scroll', syncNav, { passive: true });
   }
