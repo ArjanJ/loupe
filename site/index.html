@@ -25,6 +25,7 @@
 <meta name="twitter:description" content="Zoomable architecture maps for codebases and multi-repo systems. One HTML file, works offline, uses your own model.">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="style.css">
+<script src="theme.js"></script>
 <script src="site.js" defer></script>
 </head>
 <body id="top">
@@ -45,7 +46,7 @@
 
 <main id="main">
   <div class="intro">
-  <div class="zoom-grid" aria-hidden="true"></div>
+  <div class="zoom-grid" aria-hidden="true"><div class="grid-spot"></div></div>
   <section class="hero" aria-labelledby="hero-title">
     <div class="hero-in">
       <h1 id="hero-title">Zoomable architecture maps for any codebase</h1>
@@ -153,6 +154,11 @@
           <span>Loupe</span>
         </a>
         <p>v0.1.2 · Made by <a href="https://x.com/arjanjassal" rel="noopener">Arjan Jassal</a></p>
+        <div class="theme-seg" id="themeSeg" role="group" aria-label="Appearance" hidden>
+          <button type="button" data-pref="system" aria-pressed="true" title="System"><svg viewBox="0 0 18 18" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 2.75a6.25 6.25 0 1 0 0 12.5a6.25 6.25 0 1 0 0-12.5z"/><path d="M9 2.75v12.5a6.25 6.25 0 0 1 0-12.5z" fill="currentColor" stroke="none"/></svg><span class="sr">System</span></button>
+          <button type="button" data-pref="light" aria-pressed="false" title="Light"><svg viewBox="0 0 18 18" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6.1a2.9 2.9 0 1 0 0 5.8a2.9 2.9 0 1 0 0-5.8z"/><path d="M9 1.8v1.6M9 14.6v1.6M1.8 9h1.6M14.6 9h1.6M3.9 3.9l1.15 1.15M12.95 12.95l1.15 1.15M3.9 14.1l1.15-1.15M12.95 5.05l1.15-1.15"/></svg><span class="sr">Light</span></button>
+          <button type="button" data-pref="dark" aria-pressed="false" title="Dark"><svg viewBox="0 0 18 18" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.6 11.2A6.3 6.3 0 0 1 6.8 3.4a6.3 6.3 0 1 0 7.8 7.8z"/></svg><span class="sr">Dark</span></button>
+        </div>
       </div>
       <ul class="foot-links">
         <li><a href="https://github.com/ArjanJ/loupe" rel="noopener">GitHub</a></li>
