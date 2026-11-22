@@ -660,6 +660,31 @@ try {
     check(r.code === 0 && wsHasSlack && !wsHasGithub, 'scan quality (workspace): relations.mjs keeps packages/x/src/build/foo.ts and skips packages/x/build/', JSON.stringify(wsRels) + '\n' + r.all);
   }
 
+  // ---------- import aliases: tsconfig "paths" (JSONC + extends), "baseUrl", SvelteKit $lib ----------
+  {
+    const al = join(TMP, 'aliases');
+    const writeAl = (rel, content) => { const full = join(al, rel); mkdirSync(dirname(full), { recursive: true }); writeFileSync(full, content); };
+    writeAl('package.json', JSON.stringify({ name: 'alias-mono', private: true, workspaces: ['server', 'web', 'app'] }));
+    writeAl('server/package.json', JSON.stringify({ name: 'srv', version: '1.0.0' }));
+    writeAl('server/tsconfig.base.json', JSON.stringify({ compilerOptions: { strict: true } }));
+    writeAl('server/tsconfig.json', `{\n  // NestJS-style absolute imports\n  "extends": "./tsconfig.base.json",\n  "compilerOptions": {\n    "paths": { "src/*": ["./src/*"], /* tests */ "test/*": ["./test/*"] },\n  },\n}\n`);
+    writeAl('server/src/services/user.service.ts', `import { Injectable } from '@nestjs/common';\nimport { findUser } from 'src/repositories/user.repository.js';\n\nexport const getUser = () => findUser();\nexport const di = Injectable;\n`);
+    writeAl('server/src/repositories/user.repository.ts', `export function findUser() {\n  return { id: 1 };\n}\n`);
+    writeAl('web/package.json', JSON.stringify({ name: 'web', version: '1.0.0' }));
+    writeAl('web/src/lib/api.ts', `export const api = { list: () => [] };\n`);
+    writeAl('web/src/routes/photos.ts', `import { api } from '$lib/api';\n\nexport const photos = api.list();\n`);
+    writeAl('app/package.json', JSON.stringify({ name: 'app', version: '1.0.0' }));
+    writeAl('app/tsconfig.json', JSON.stringify({ compilerOptions: { baseUrl: 'src' } }));
+    writeAl('app/src/feature/view.ts', `import { format } from 'shared/format';\n\nexport const view = format('x');\n`);
+    writeAl('app/src/shared/format.ts', `export function format(s: string) {\n  return s.trim();\n}\n`);
+    const gal = (...a) => execFileSync(gitBin, a, { cwd: al, stdio: 'pipe' });
+    gal('init', '-q'); gal('add', '-A'); gal('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'init');
+    r = await run(['map', al, '--no-open', '--backend', 'openai'], { ...stEnv, LOUPE_NOLLM: '1' });
+    // three aliased imports resolve (src/*, $lib, baseUrl); the npm import (@nestjs/common) does not
+    const nImp = Number((r.all.match(/\[rel\] imports (\d+)/) || [])[1]);
+    check(r.code === 0 && nImp === 3, 'relations: tsconfig "paths" (JSONC + extends), "baseUrl" and SvelteKit $lib imports resolve', `imports=${nImp}\n` + r.all);
+  }
+
   // ---------- JS/TS private class fields are not treated as # comments ----------
   {
     const priv = join(TMP, 'private-fields');
