@@ -94,12 +94,77 @@ for (const d of [...wsDirs, '.']) { try { const pj = JSON.parse(readRepo(d === '
 const at = (dir, rest) => (dir === '.' ? rest : `${dir}/${rest}`);
 const EXTS = ['', '.ts', '.tsx', '.mts', '.js', '.jsx', '.mjs', '/index.ts', '/index.tsx', '/index.js', '/index.mjs'];
 const firstFile = (base) => { for (const e of EXTS) if (files.has(base + e)) return base + e; const ts = base.replace(/\.(m?)js$/, '.$1ts'); if (files.has(ts)) return ts; const tsx = base.replace(/\.jsx?$/, '.tsx'); return files.has(tsx) ? tsx : null; };
+// tsconfig/jsconfig path aliases ("paths" + "baseUrl"), from the nearest config above the importing file.
+// Configs are JSONC; local "extends" chains are followed, package ones (node_modules) are not.
+function parseJsonc(text) {
+  let out = '', i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === '"') { let j = i + 1; while (j < text.length && text[j] !== '"') j += text[j] === '\\' ? 2 : 1; out += text.slice(i, j + 1); i = j + 1; }
+    else if (c === '/' && text[i + 1] === '/') { while (i < text.length && text[i] !== '\n') i++; }
+    else if (c === '/' && text[i + 1] === '*') { const j = text.indexOf('*/', i + 2); i = j < 0 ? text.length : j + 2; }
+    else { out += c; i++; }
+  }
+  return JSON.parse(out.replace(/,(\s*[}\]])/g, '$1'));
+}
+function loadTsconfig(file, depth = 0) {
+  let cfg; try { cfg = parseJsonc(readRepo(file) || ''); } catch { return null; }
+  if (!cfg || typeof cfg !== 'object') return null;
+  const dir = posix.dirname(file);
+  const own = cfg.compilerOptions || {};
+  let base = { paths: null, baseUrl: null };
+  for (const ext of [].concat(cfg.extends || [])) {
+    if (depth > 4 || typeof ext !== 'string' || !ext.startsWith('.')) continue;
+    let p = posix.normalize(posix.join(dir, ext)); if (!p.endsWith('.json')) p += '.json';
+    const parent = loadTsconfig(p, depth + 1); if (parent) base = { paths: parent.paths || base.paths, baseUrl: parent.baseUrl || base.baseUrl };
+  }
+  const baseUrl = typeof own.baseUrl === 'string' ? posix.normalize(posix.join(dir, own.baseUrl)) : base.baseUrl;
+  // "paths" entries resolve against baseUrl when set, else against the config that declares them
+  const paths = own.paths && typeof own.paths === 'object' ? { map: own.paths, root: baseUrl || dir } : base.paths;
+  return { paths, baseUrl };
+}
+const tsconfigCache = new Map(); // dir -> config | null
+function tsconfigFor(from) {
+  const chain = [];
+  let dir = posix.dirname(from);
+  for (;;) {
+    if (tsconfigCache.has(dir)) { const hit = tsconfigCache.get(dir); chain.forEach((d) => tsconfigCache.set(d, hit)); return hit; }
+    chain.push(dir);
+    for (const name of ['tsconfig.json', 'jsconfig.json']) {
+      const file = dir === '.' ? name : `${dir}/${name}`;
+      if (isRegularFile(file)) { const cfg = loadTsconfig(file); chain.forEach((d) => tsconfigCache.set(d, cfg)); return cfg; }
+    }
+    if (dir === '.' || dir === '') { chain.forEach((d) => tsconfigCache.set(d, null)); return null; }
+    dir = posix.dirname(dir);
+  }
+}
+function resolveAlias(from, spec) {
+  const cfg = tsconfigFor(from); if (!cfg) return null;
+  if (cfg.paths) {
+    let best = null; // longest matching prefix wins, as in TypeScript
+    for (const [pattern, targets] of Object.entries(cfg.paths.map)) {
+      if (!Array.isArray(targets)) continue;
+      const star = pattern.indexOf('*');
+      const prefix = star < 0 ? pattern : pattern.slice(0, star), suffix = star < 0 ? '' : pattern.slice(star + 1);
+      const hit = star < 0 ? spec === pattern : spec.startsWith(prefix) && spec.endsWith(suffix) && spec.length >= prefix.length + suffix.length;
+      if (hit && (!best || prefix.length > best.prefix.length)) best = { prefix, targets, rest: star < 0 ? '' : spec.slice(prefix.length, spec.length - suffix.length) };
+    }
+    if (best) for (const t of best.targets) {
+      if (typeof t !== 'string') continue;
+      const p = firstFile(posix.normalize(posix.join(cfg.paths.root, t.replace('*', best.rest))));
+      if (p) return p;
+    }
+  }
+  return cfg.baseUrl ? firstFile(posix.normalize(posix.join(cfg.baseUrl, spec))) : null;
+}
 function resolveSpec(from, spec) {
   if (spec.startsWith('.')) return firstFile(posix.normalize(posix.join(posix.dirname(from), spec)));
+  const aliased = resolveAlias(from, spec); if (aliased) return aliased;
   if (spec.startsWith('@/') || spec.startsWith('~/')) { // common app alias for <package>/src
     const pkg = pkgOf(from);
     return firstFile(at(pkg, `src/${spec.slice(2)}`)) || firstFile(at(pkg, spec.slice(2)));
   }
+  if (spec === '$lib' || spec.startsWith('$lib/')) return firstFile(at(pkgOf(from), `src/lib${spec.slice(4)}`)); // SvelteKit
   const parts = spec.split('/'); const name = spec.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0];
   const dir = pkgByName.get(name); if (dir == null) return null;
   const sub = spec.slice(name.length + 1);
