@@ -3,33 +3,33 @@
 @font-face { font-family: "JetBrains Mono"; src: url(fonts/jbmono.woff) format("woff"); font-weight: 400; font-style: normal; font-display: swap; }
 
 :root {
-  --bg: #f6f6f4;
-  --surface: #ffffff;
-  --surface-2: #eeeeea;
-  --nav-glass: rgba(246, 246, 244, .88);
+  --bg: light-dark(#f6f6f4, #0f0f11);
+  --surface: light-dark(#ffffff, #161618);
+  --surface-2: light-dark(#eeeeea, #19191c);
+  --nav-glass: light-dark(rgba(246, 246, 244, .88), rgba(15, 15, 17, .86));
 
-  --ink: #141416;
-  --ink-2: #4b4b52;
-  --ink-3: #64646b;
+  --ink: light-dark(#141416, #f3f3f5);
+  --ink-2: light-dark(#4b4b52, #a4a4ac);
+  --ink-3: light-dark(#64646b, #8a8a93);
 
-  --line: rgba(20, 20, 22, .11);
-  --line-strong: rgba(20, 20, 22, .19);
-  --line-subtle: rgba(20, 20, 22, .065);
+  --line: light-dark(rgba(20, 20, 22, .11), rgba(255, 255, 255, .11));
+  --line-strong: light-dark(rgba(20, 20, 22, .19), rgba(255, 255, 255, .20));
+  --line-subtle: light-dark(rgba(20, 20, 22, .065), rgba(255, 255, 255, .065));
 
-  --accent: #005ec4;
-  --focus: #005ec4;
+  --accent: light-dark(#005ec4, #5aa7ff);
+  --focus: light-dark(#005ec4, #5aa7ff);
 
-  --btn-bg: #141416;
-  --btn-bg-hover: #2d2d32;
-  --btn-ink: #ffffff;
-  --btn-done: #18794e;
+  --btn-bg: light-dark(#141416, #f3f3f5);
+  --btn-bg-hover: light-dark(#2d2d32, #ffffff);
+  --btn-ink: light-dark(#ffffff, #111113);
+  --btn-done: light-dark(#18794e, #30a46c);
 
-  --cmd-bg: #ffffff;
-  --cmd-shadow: 0 1px 2px rgba(0, 0, 0, .04);
+  --cmd-bg: light-dark(#ffffff, #161618);
+  --cmd-shadow: 0 1px 2px light-dark(rgba(0, 0, 0, .04), transparent);
 
-  --dot: rgba(20, 20, 22, .13);
+  --dot: light-dark(rgba(20, 20, 22, .13), rgba(255, 255, 255, .10));
 
-  --canvas: #ffffff; /* the Loupe viewer's own canvas colour */
+  --canvas: light-dark(#ffffff, #161618); /* the Loupe viewer's own canvas colour */
 
   --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Inter", system-ui, "Segoe UI", Roboto, sans-serif;
   --display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", system-ui, "Segoe UI", Roboto, sans-serif;
@@ -40,38 +40,10 @@
   --gutter: 48px;
   color-scheme: light dark;
 }
+/* theme.js pins an explicit choice; without it (or without JS) the OS setting decides */
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0f0f11;
-    --surface: #161618;
-    --surface-2: #19191c;
-    --nav-glass: rgba(15, 15, 17, .86);
-
-    --ink: #f3f3f5;
-    --ink-2: #a4a4ac;
-    --ink-3: #8a8a93;
-
-    --line: rgba(255, 255, 255, .11);
-    --line-strong: rgba(255, 255, 255, .20);
-    --line-subtle: rgba(255, 255, 255, .065);
-
-    --accent: #5aa7ff;
-    --focus: #5aa7ff;
-
-    --btn-bg: #f3f3f5;
-    --btn-bg-hover: #ffffff;
-    --btn-ink: #111113;
-    --btn-done: #30a46c;
-
-    --cmd-bg: #161618;
-    --cmd-shadow: none;
-
-    --dot: rgba(255, 255, 255, .10);
-
-    --canvas: #161618;
-  }
-}
 
 *, *::before, *::after { box-sizing: border-box; }
 html { scroll-behavior: smooth; scroll-padding-top: 64px; -webkit-text-size-adjust: 100%; }
@@ -210,8 +182,8 @@ h1, h2, h3, p, pre, dl, dd { margin: 0; }
   opacity: 0;
 }
 .intro.zooming .zoom-grid {
-  transform: scale(calc(1 + var(--z) * 1.6));
-  opacity: calc(1 - var(--z) * .45);
+  transform: scale(calc(1 + var(--z) * .25));
+  opacity: calc(1 - var(--z) * .3);
   will-change: transform, opacity;
 }
 .intro.zooming .zoom-grid::after { opacity: clamp(0, (var(--z) - .15) * 1.6, 1); }
@@ -618,6 +590,31 @@ html.is-touch .veil svg {
 .foot-brand p { margin-top: 10px; }
 .foot-brand a { color: var(--ink-2); }
 .foot-brand a:hover { color: var(--ink); text-decoration: none; }
+/* appearance: System / Light / Dark (theme.js); hidden without JS, where the OS setting simply applies */
+.theme-seg {
+  display: inline-flex;
+  gap: 2px;
+  margin-top: 14px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.theme-seg[hidden] { display: none; }
+.theme-seg button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--ink-3);
+  cursor: pointer;
+  transition: color .15s var(--ease), background-color .15s var(--ease);
+}
+.theme-seg button:hover { color: var(--ink); }
+.theme-seg button[aria-pressed="true"] { background: var(--surface-2); color: var(--ink); }
 .foot-links {
   display: flex;
   flex-wrap: wrap;
