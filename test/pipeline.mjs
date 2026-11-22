@@ -508,6 +508,39 @@ try {
     check(r.code === 0 && polyTree?.root?.children?.[0]?.packageName === 'polyglot-app' && polyText.includes('class Signer') && polyText.includes('StartServer()') && polyText.includes('struct Token') && cppObjcOk, 'languages: multi-language repo maps Python/Go/Rust/C++/Objective-C + extracts exports', polyText.slice(0, 1500));
   }
 
+  // ---------- Python + Go import relations ----------
+  {
+    const pg = join(TMP, 'py-go-imports');
+    const write = (rel, content) => { const full = join(pg, rel); mkdirSync(dirname(full), { recursive: true }); writeFileSync(full, content); };
+    write('src/shop/__init__.py', '');
+    write('src/shop/models.py', 'class User:\n    pass\n');
+    write('src/shop/db.py', 'def connect():\n    return 1\n');
+    write('src/shop/json.py', 'def dumps(x):\n    return str(x)\n'); // shadows the stdlib name: `import json` must not resolve here
+    write('src/shop/typehints.py', 'Hint = int\n');
+    write('src/shop/service.py', [
+      '"""Service.', '', 'Example:', '    from shop.typehints import Hint', '"""', 'import json',
+      'from typing import TYPE_CHECKING', 'from .models import (', '    User,', ')', 'from shop import db',
+      'if TYPE_CHECKING:', '    from shop.typehints import Hint', '', '', 'def run():', '    return json.dumps(db.connect()), User()', '',
+    ].join('\n'));
+    write('go.mod', 'module example.com/svc\n\ngo 1.22\n');
+    write('main.go', 'package main\n\nimport (\n\t"fmt"\n\n\t"example.com/svc/store"\n)\n\nfunc main() {\n\tfmt.Println(store.Open())\n\trun()\n}\n');
+    write('run.go', 'package main\n\nfunc run() {}\n');
+    write('store/store.go', 'package store\n\nfunc Open() int { return 1 }\n');
+    write('store/other.go', 'package store\n\nfunc Other() {}\n');
+    const g = (...a) => execFileSync(gitBin, a, { cwd: pg, stdio: 'pipe' });
+    g('init', '-q'); g('add', '-A'); g('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'init');
+    r = await run(['map', pg, '--no-open', '--backend', 'openai'], stEnv);
+    const t = existsSync(join(pg, '.loupe', 'tree.json')) ? JSON.parse(readFileSync(join(pg, '.loupe', 'tree.json'), 'utf8')) : { root: {} };
+    const fm = existsSync(join(pg, '.loupe', 'tree.files.json')) ? JSON.parse(readFileSync(join(pg, '.loupe', 'tree.files.json'), 'utf8')) : {};
+    const rels = t.root.relations || [];
+    const edge = (a, b) => rels.find((x) => x.kind === 'import' && x.from === fm[a] && x.to === fm[b]);
+    const dump = JSON.stringify(rels.map((x) => [x.from, x.to, x.label]));
+    check(r.code === 0 && /uses User/.test(edge('src/shop/service.py', 'src/shop/models.py')?.label || '') && edge('src/shop/service.py', 'src/shop/db.py'), 'python imports: relative and absolute (src layout, parenthesised) imports resolve', dump);
+    check(!edge('src/shop/service.py', 'src/shop/json.py') && !edge('src/shop/service.py', 'src/shop/typehints.py'), 'python imports: stdlib names, docstrings and TYPE_CHECKING blocks are skipped', dump);
+    check(/uses Open/.test(edge('main.go', 'store/store.go')?.label || '') && !edge('main.go', 'store/other.go'), 'go imports: module import resolves to the file declaring the used symbol', dump);
+    check(/uses run/.test(edge('main.go', 'run.go')?.label || ''), 'go imports: same-package references between files', dump);
+  }
+
   // ---------- skip vendored, build, generated, gitignored, .gitattributes & minified files (with re-include) ----------
   {
     const vend = join(TMP, 'vendored-repo');
