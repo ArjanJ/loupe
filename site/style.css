@@ -27,9 +27,7 @@
   --cmd-bg: #ffffff;
   --cmd-shadow: 0 1px 2px rgba(0, 0, 0, .04);
 
-
-
-
+  --dot: rgba(20, 20, 22, .13);
 
   --canvas: #ffffff; /* the Loupe viewer's own canvas colour */
 
@@ -69,9 +67,7 @@
     --cmd-bg: #161618;
     --cmd-shadow: none;
 
-
-
-
+    --dot: rgba(255, 255, 255, .10);
 
     --canvas: #161618;
   }
@@ -183,6 +179,55 @@ h1, h2, h3, p, pre, dl, dd { margin: 0; }
 .nav-btn .gh { fill: currentColor; flex: none; }
 
 /* centered editorial hero — balanced over the live map stage */
+/* Zoom handoff: hero + demo read as one camera move into the map. JS writes --z (0 → 1, eased) from scroll onto .intro
+   and adds .zooming, so without JS or with reduced motion everything stays at rest. Three depths move at different rates:
+   the headline drifts past the lens (grows, blurs, fades), the frame opens to full size, and the canvas grid zooms
+   toward the frame's centre (--oy) while a finer grid fades in between its dots, the way the viewer reveals detail. */
+.intro {
+  position: relative;
+  isolation: isolate;
+  overflow: clip;
+}
+.zoom-grid,
+.zoom-grid::after {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-size: 22px 22px;
+}
+.zoom-grid {
+  z-index: -1;
+  background-image: radial-gradient(circle, var(--dot) 1px, transparent 1.5px);
+  background-position: center 11px;
+  -webkit-mask-image: radial-gradient(ellipse 78% 72% at 50% 38%, #000 35%, transparent 85%);
+  mask-image: radial-gradient(ellipse 78% 72% at 50% 38%, #000 35%, transparent 85%);
+  transform-origin: 50% var(--oy, 60%);
+}
+.zoom-grid::after {
+  content: "";
+  background-image: radial-gradient(circle, var(--dot) .75px, transparent 1.15px);
+  background-position: calc(50% + 11px) 22px;
+  opacity: 0;
+}
+.intro.zooming .zoom-grid {
+  transform: scale(calc(1 + var(--z) * 1.6));
+  opacity: calc(1 - var(--z) * .45);
+  will-change: transform, opacity;
+}
+.intro.zooming .zoom-grid::after { opacity: clamp(0, (var(--z) - .15) * 1.6, 1); }
+/* only once the camera is moving (.moving), so the headline renders crisp, unlayered text at rest */
+.intro.zooming.moving .hero-in {
+  transform: scale(calc(1 + var(--z) * .05));
+  filter: blur(calc(max(0, var(--z) - .3) * 7px));
+  opacity: calc(1 - max(0, var(--z) - .2) * 1.25);
+}
+/* the frame opens like an aperture (a clip, not a scale, so the map keeps its true size and pointer coordinates) */
+.intro.zooming .frame {
+  clip-path: inset(calc((1 - var(--z)) * 14px) calc((1 - var(--z)) * 30px) round 28px);
+}
+@media (max-width: 680px) {
+  .intro.zooming .frame { clip-path: inset(calc((1 - var(--z)) * 6px) calc((1 - var(--z)) * 10px) round 18px); }
+}
 .hero {
   padding: 72px var(--gutter) 56px;
   text-align: center;
@@ -191,6 +236,15 @@ h1, h2, h3, p, pre, dl, dd { margin: 0; }
   max-width: 720px;
   margin: 0 auto;
 }
+
+/* entrance: copy rises in sequence, then the map comes into focus like a lens */
+@keyframes rise { from { opacity: 0; transform: translateY(10px); } }
+@keyframes focus-in { from { opacity: 0; filter: blur(10px); transform: scale(.985); } }
+.hero h1 { animation: rise .8s var(--ease) both; }
+.hero .sub { animation: rise .8s var(--ease) .07s both; }
+.hero .hero-act { animation: rise .8s var(--ease) .14s both; }
+.stage { animation: focus-in 1s var(--ease) .26s backwards; }
+.stage-meta { animation: rise .8s var(--ease) .5s backwards; }
 .hero h1 {
   margin: 0 auto;
   font: 600 clamp(32px, 4.1vw, 54px)/1.07 var(--display);
@@ -483,7 +537,54 @@ html.is-touch .veil svg {
   margin-top: 5px;
   color: var(--ink);
 }
-.swatch svg { display: block; }
+.swatch svg { display: block; overflow: visible; }
+
+/* swatches carry traffic. When the key scrolls into view each line draws in, then one packet runs it;
+   hovering a row keeps that packet running. Each type moves the way its connection does:
+   code flows straight through, HTTP goes and comes back, data streams slowly, async hops, external leaves the frame. */
+.swatch .pkt { fill: var(--accent); stroke: var(--bg); stroke-width: 1.5; opacity: 0; }
+.trace-list.armed .swatch svg { clip-path: inset(-6px 100% -6px -6px); }
+.trace-list.in .swatch svg { animation: sw-draw .75s var(--ease) var(--d, 0s) both; }
+.trace-list.in .swatch .pkt { animation: var(--pk) calc(var(--d, 0s) + .55s) 1 both; }
+@keyframes sw-draw { to { clip-path: inset(-6px -16px -6px -6px); } }
+.sw-code  { --pk: pk-go 1s cubic-bezier(.45, 0, .55, 1); }
+.sw-http  { --pk: pk-round 1.7s cubic-bezier(.45, 0, .55, 1); }
+.sw-data  { --pk: pk-go 2.1s linear; }
+.sw-async { --pk: pk-hop 1.5s linear; }
+.sw-ext   { --pk: pk-out 1.3s cubic-bezier(.55, 0, .9, .45); }
+@keyframes pk-go {
+  0% { opacity: 0; transform: translateX(0); }
+  12% { opacity: 1; }
+  88% { opacity: 1; }
+  100% { opacity: 0; transform: translateX(40px); }
+}
+@keyframes pk-round {
+  0% { opacity: 0; transform: translateX(0); }
+  8% { opacity: 1; }
+  46%, 54% { transform: translateX(40px); }
+  92% { opacity: 1; }
+  100% { opacity: 0; transform: translateX(0); }
+}
+@keyframes pk-hop {
+  0% { opacity: 0; transform: translateX(0); animation-timing-function: steps(1, end); }
+  4% { opacity: 1; transform: translateX(0); animation-timing-function: steps(6, end); }
+  92% { opacity: 1; transform: translateX(40px); animation-timing-function: linear; }
+  100% { opacity: 0; transform: translateX(40px); }
+}
+@keyframes pk-out {
+  0% { opacity: 0; transform: translateX(0); }
+  10% { opacity: 1; }
+  70% { opacity: 1; }
+  100% { opacity: 0; transform: translateX(54px); }
+}
+.trace-list li:nth-child(2) { --d: .12s; }
+.trace-list li:nth-child(3) { --d: .24s; }
+.trace-list li:nth-child(4) { --d: .36s; }
+.trace-list li:nth-child(5) { --d: .48s; }
+.trace-list li { transition: background-color .2s var(--ease); }
+@media (hover: hover) {
+  .trace-list li:hover .swatch .pkt { animation: var(--pk) 0s infinite both; }
+}
 .trace-name {
   font: 600 14px/1.4 var(--sans);
   color: var(--ink);

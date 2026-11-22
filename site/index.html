@@ -44,6 +44,8 @@
 </header>
 
 <main id="main">
+  <div class="intro">
+  <div class="zoom-grid" aria-hidden="true"></div>
   <section class="hero" aria-labelledby="hero-title">
     <div class="hero-in">
       <h1 id="hero-title">Zoomable architecture maps for any codebase</h1>
@@ -82,6 +84,7 @@
       </div>
     </div>
   </section>
+  </div>
 
   <section class="band" id="start" aria-labelledby="start-title">
     <div class="band-in split">
@@ -111,27 +114,27 @@
       </div>
       <ul class="trace-list" aria-label="Connection types">
         <li>
-          <span class="swatch" aria-hidden="true"><svg viewBox="0 0 44 12" width="44" height="12"><line x1="2" y1="6" x2="42" y2="6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>
+          <span class="swatch sw-code" aria-hidden="true"><svg viewBox="0 0 44 12" width="44" height="12"><line x1="2" y1="6" x2="42" y2="6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle class="pkt" cx="2" cy="6" r="2.6"/></svg></span>
           <span class="trace-name">Code</span>
           <span class="trace-desc">One module imports another.</span>
         </li>
         <li>
-          <span class="swatch" aria-hidden="true"><svg viewBox="0 0 44 12" width="44" height="12"><line x1="2" y1="6" x2="42" y2="6" stroke="currentColor" stroke-width="1.8" stroke-dasharray="7 5" stroke-linecap="round"/></svg></span>
+          <span class="swatch sw-http" aria-hidden="true"><svg viewBox="0 0 44 12" width="44" height="12"><line x1="2" y1="6" x2="42" y2="6" stroke="currentColor" stroke-width="1.8" stroke-dasharray="7 5" stroke-linecap="round"/><circle class="pkt" cx="2" cy="6" r="2.6"/></svg></span>
           <span class="trace-name">HTTP</span>
           <span class="trace-desc">A client calls an API route.</span>
         </li>
         <li>
-          <span class="swatch" aria-hidden="true"><svg viewBox="0 0 44 12" width="44" height="12"><line x1="2" y1="6" x2="42" y2="6" stroke="currentColor" stroke-width="1.7" stroke-dasharray="14 3.5" stroke-linecap="round"/></svg></span>
+          <span class="swatch sw-data" aria-hidden="true"><svg viewBox="0 0 44 12" width="44" height="12"><line x1="2" y1="6" x2="42" y2="6" stroke="currentColor" stroke-width="1.7" stroke-dasharray="14 3.5" stroke-linecap="round"/><circle class="pkt" cx="2" cy="6" r="2.6"/></svg></span>
           <span class="trace-name">Data</span>
           <span class="trace-desc">Code reads or writes a database table.</span>
         </li>
         <li>
-          <span class="swatch" aria-hidden="true"><svg viewBox="0 0 44 12" width="44" height="12"><line x1="2" y1="6" x2="42" y2="6" stroke="currentColor" stroke-width="2.1" stroke-dasharray="0.1 5.5" stroke-linecap="round"/></svg></span>
+          <span class="swatch sw-async" aria-hidden="true"><svg viewBox="0 0 44 12" width="44" height="12"><line x1="2" y1="6" x2="42" y2="6" stroke="currentColor" stroke-width="2.1" stroke-dasharray="0.1 5.5" stroke-linecap="round"/><circle class="pkt" cx="2" cy="6" r="2.6"/></svg></span>
           <span class="trace-name">Async</span>
           <span class="trace-desc">Work is handed off through a queue or event.</span>
         </li>
         <li>
-          <span class="swatch" aria-hidden="true"><svg viewBox="0 0 44 12" width="44" height="12"><line x1="2" y1="6" x2="42" y2="6" stroke="currentColor" stroke-width="1.8" stroke-dasharray="10 4 1.5 4" stroke-linecap="round"/></svg></span>
+          <span class="swatch sw-ext" aria-hidden="true"><svg viewBox="0 0 44 12" width="44" height="12"><line x1="2" y1="6" x2="42" y2="6" stroke="currentColor" stroke-width="1.8" stroke-dasharray="10 4 1.5 4" stroke-linecap="round"/><circle class="pkt" cx="2" cy="6" r="2.6"/></svg></span>
           <span class="trace-name">External</span>
           <span class="trace-desc">A call to a third-party service, like Stripe or OpenAI.</span>
         </li>

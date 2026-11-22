@@ -146,6 +146,45 @@
   });
   for (const frame of document.querySelectorAll('.frame')) fit.observe(frame);
 
+  // Connection key: the swatches draw in and run one packet each, the first time the list scrolls into view.
+  // Lines are only hidden ("armed") once this script runs, so without JS or with reduced motion they're simply there.
+  const key = document.querySelector('.trace-list');
+  if (key && !calm) {
+    key.classList.add('armed');
+    const once = new IntersectionObserver(([e]) => {
+      if (!e.isIntersecting) return;
+      key.classList.add('in');
+      once.disconnect();
+    }, { threshold: 0.5 });
+    once.observe(key);
+  }
+
+  // Zoom handoff: one scroll-driven camera move from the hero into the map (see .intro in style.css).
+  // --z eases from 0 at the top to 1 once the frame's centre reaches the upper third of the viewport.
+  const intro = document.querySelector('.intro');
+  const grid = intro && intro.querySelector('.zoom-grid');
+  const stageEl = document.getElementById('stage');
+  if (grid && stageEl && !calm) {
+    let span = 1, raf = 0;
+    const measure = () => {
+      const ir = intro.getBoundingClientRect(), fr = stageEl.getBoundingClientRect();
+      const cy = fr.top + fr.height / 2 - ir.top;
+      intro.style.setProperty('--oy', `${cy}px`);
+      span = Math.max(1, ir.top + scrollY + cy - innerHeight / 3);
+    };
+    const paint = () => {
+      raf = 0;
+      const p = Math.min(1, Math.max(0, scrollY / span));
+      intro.style.setProperty('--z', (p * p * (3 - 2 * p)).toFixed(4));
+      intro.classList.toggle('moving', p > 0);
+    };
+    const queue = () => { if (!raf) raf = requestAnimationFrame(paint); };
+    measure(); paint();
+    intro.classList.add('zooming');
+    addEventListener('scroll', queue, { passive: true });
+    new ResizeObserver(() => { measure(); queue(); }).observe(intro);
+  }
+
   // Nav frost transition on scroll.
   const nav = document.getElementById('nav');
   if (nav) {
