@@ -188,8 +188,28 @@ for (const fi of files.values()) {
     const label = syms.length ? `uses ${syms.slice(0, 3).join(', ')}${syms.length > 3 ? ` +${syms.length - 3}` : ''}` : 'imports';
     add(fi.node, files.get(target).node, 'import', label, [fi.path, line]); nImports++;
   }
+  // CommonJS: `const x = require('./a')`, `const { a, b: c } = require('./a')`, `require('./a').x`, bare `require('./a')`
+  if (!/\.[cm]?[jt]sx?$/.test(fi.path)) continue;
+  for (const m of fi.text.matchAll(/\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)(\s*\.\s*[\w$]+)?/g)) {
+    const line = lineAt(fi, m.index);
+    if (isCommentLine(fi.lines[line - 1] || '', fi.path)) continue;
+    const target = resolveSpec(fi.path, m[1]); if (!target || target === fi.path) continue;
+    const syms = [];
+    const bind = fi.text.slice(Math.max(0, m.index - 2000), m.index).match(/\b(?:const|let|var)\s+(\{[^{}]*\}|[\w$]+)\s*=\s*$/);
+    if (bind && bind[1].startsWith('{')) {
+      for (const part of bind[1].slice(1, -1).split(',')) {
+        const [key, local] = part.replace(/=.*$/s, '').split(':').map((s) => s.trim());
+        if (!key || key.startsWith('...')) continue;
+        syms.push(key); names.set(local || key, target);
+      }
+    } else if (bind) {
+      names.set(bind[1], target);
+      syms.push(m[2] ? m[2].replace(/[\s.]/g, '') : bind[1]);
+    }
+    add(fi.node, files.get(target).node, 'import', usesLabel(syms), [fi.path, line]); nImports++;
+  }
 }
-const usesLabel = (syms) => (syms.length ? `uses ${syms.slice(0, 3).join(', ')}${syms.length > 3 ? ` +${syms.length - 3}` : ''}` : 'imports');
+function usesLabel(syms) { return syms.length ? `uses ${syms.slice(0, 3).join(', ')}${syms.length > 3 ? ` +${syms.length - 3}` : ''}` : 'imports'; }
 nImports += pythonImports() + goImports() + javaImports() + phpImports() + rustImports();
 log('imports', nImports);
 
