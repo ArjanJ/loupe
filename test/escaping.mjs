@@ -22,7 +22,7 @@ const idA2 = `a2:${EVIL}`;
 const idB1 = `b1:${EVIL}`;
 const leaf = (id, extra = {}) => ({ id, label: `${id} ${EVIL}`, kind: 'file', path: `src/${EVIL}/${id}.ts`, weight: 10, shortDescription: EVIL, longDescription: EVIL, functions: [EVIL], children: [], edges: [], ...extra });
 const tree = {
-  meta: { source: EVIL, levels: 3, levelNames: ['system', EVIL, 'files'], nodeCount: 6 },
+  meta: { source: EVIL, commit: EVIL, dirty: true, generatedAt: EVIL, levels: 3, levelNames: ['system', EVIL, 'files'], nodeCount: 6 },
   root: { id: 'system', label: `Evil ${EVIL}`, kind: 'system', path: `repo/${EVIL}`, weight: 100, shortDescription: EVIL, longDescription: EVIL, edges: [],
     children: [
       { id: idPkgA, label: `A ${EVIL}`, kind: 'package', path: `packages/${EVIL}/a`, packageName: `@evil/${EVIL}`, weight: 50, shortDescription: EVIL, longDescription: EVIL, edges: [], children: [leaf(idA1), leaf(idA2, { status: 'proposed', statusNote: EVIL, confidence: 'low' })] },
@@ -63,14 +63,14 @@ try {
     const byId = new Map(window.__sz.nodes.map((n) => [n.id, n]));
     return {
       pwn: window.__pwn ?? null, scripts: document.scripts.length, imgs: document.images.length,
-      svgs: document.querySelectorAll('svg[onload]').length, title: document.title,
+      svgs: document.querySelectorAll('svg[onload]').length, title: document.title, stampHidden: document.getElementById('stamp').hidden,
       metaRoot: byId.get('system')?.meta, metaPkgA: byId.get(pkgA)?.meta, metaPkgB: byId.get(pkgB)?.meta,
     };
   }, [idPkgA, idPkgB]);
   await b.close();
   const pluralOk = res.metaRoot === '2 packages' && res.metaPkgA === '2 files' && res.metaPkgB === '1 file'
     && flowsPopText.includes('2 steps') && flowsPopText.includes('1 step') && !flowsPopText.includes('1 steps');
-  const ok = hasCsp && pluralOk && res.pwn === null && res.imgs === 0 && res.svgs === 0 && res.scripts === 2 && !errs.length;
+  const ok = hasCsp && pluralOk && res.stampHidden && res.pwn === null && res.imgs === 0 && res.svgs === 0 && res.scripts === 2 && !errs.length;
   console.log(JSON.stringify({ hasCsp, pluralOk, ...res, errors: errs }));
   console.error(ok ? 'PASS' : 'FAIL');
   process.exitCode = ok ? 0 : 1;
