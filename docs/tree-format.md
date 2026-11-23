@@ -5,8 +5,10 @@
 ```jsonc
 {
   "meta": {
-    "source": "github.com/owner/repo",   // shown in the viewer
-    "commit": "abc1234",
+    "source": "github.com/owner/repo",   // a github.com source links the commit to GitHub
+    "commit": "3f9c2e1a7b04d58e9c61f20b3a4d7e8c5f1a2b90",  // full SHA of HEAD when the map was made
+    "dirty": false,                      // true if tracked files had uncommitted changes
+    "generatedAt": "2026-11-22T10:00:00.000Z",
     "levels": 4,
     "levelNames": ["system", "packages", "modules", "files"],  // one per depth, for the level switcher
     "nodeCount": 300
@@ -22,6 +24,8 @@
   }
 }
 ```
+
+`commit`, `dirty` and `generatedAt` are optional. When present, the viewer shows them as a small stamp in the bottom-left corner: the short SHA (hover for the full one, click to copy), "modified" when `dirty` is true, and the date. `loupe scan` fills them in; `loupe manifest` sets only `generatedAt`. A `commit` that isn't 4–64 hex digits is ignored.
 
 ## Node
 

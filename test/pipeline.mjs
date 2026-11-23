@@ -104,6 +104,8 @@ function checkMap(dir, r, what) {
   check(!r.all.includes(KEY), `${what}: key never printed`);
   const tree = JSON.parse(readFileSync(join(dir, '.loupe', 'tree.json'), 'utf8'));
   check(Array.isArray(tree.root.relations) && tree.root.relations.some((x) => x.kind === 'http'), `${what}: relations found the http route`, JSON.stringify(tree.root.relations));
+  const head = execFileSync(gitBin, ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
+  check(tree.meta.commit === head && tree.meta.dirty === false && !isNaN(Date.parse(tree.meta.generatedAt)), `${what}: meta records the full commit, clean worktree and date`, JSON.stringify(tree.meta));
 }
 
 try {
