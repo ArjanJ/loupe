@@ -9,9 +9,10 @@
 // The LLM is your local Claude Code CLI, the Anthropic API or the OpenAI API: see src/llm.mjs (LOUPE_BACKEND).
 import { readdirSync } from 'node:fs';
 import { join, dirname, basename, resolve, posix } from 'node:path';
-import { createLlm, BackendError, git, hasTrackedFiles, redactSecrets } from './llm.mjs';
+import { createLlm, BackendError, badAnswer, git, hasTrackedFiles, redactSecrets } from './llm.mjs';
 import { SafeFsError, within, lst, checkSafePath, safeDir, safeWriteFile, repoReader } from './fs-safe.mjs';
 import { SRC_EXT, JS_TS_EXT, SECRET_FILE, EXCLUDE, isMinified, gitSourceFilters, gitIgnoredTracked, extractExports } from './source.mjs';
+import { buildUnits, fallbackModules } from './units.mjs';
 
 if (!process.argv[2]) { console.error('usage: loupe scan <repoDir> [out.json]'); process.exit(2); }
 const REPO = resolve(process.argv[2]);
@@ -19,6 +20,8 @@ const OUT = resolve(process.argv[3] || 'loupe-tree.json');
 const FILES_OUT = OUT.replace(/\.json$/, '') + '.files.json';
 const CACHE = resolve(process.env.LOUPE_CACHE || join(dirname(OUT), '.loupe-cache'));
 const KEY_FILES_PER_MODULE = Math.max(1, Number(process.env.LOUPE_KEY_FILES) || 12);
+// how many units (files, folders, parts of folders) the module-planning prompt may show for one package
+const PLAN_UNITS = Math.max(9, Number(process.env.LOUPE_PLAN_UNITS) || 60);
 // LOUPE_IGNORE: a regex of workspace dirs or files to leave out (e.g. "^examples/")
 let IGNORE = null;
 try { IGNORE = process.env.LOUPE_IGNORE ? new RegExp(process.env.LOUPE_IGNORE) : null; } catch (e) { console.error(`loupe: invalid LOUPE_IGNORE: ${e.message}`); process.exit(2); }
@@ -163,25 +166,56 @@ const repoKind = activePackages.length > 1 ? 'monorepo' : 'repository';
 const clip = (text, n) => redactSecrets(text.slice(0, n + 4096), { urls: 'secrets' }).slice(0, n);
 const readSnippet = (p, n) => clip(docs.read(p), n);
 const fileLine = (f) => { const i = files.get(f); return `${f} (${i.loc} loc${i.exports.length ? '; exports: ' + i.exports.slice(0, 8).join(', ') : ''})`; };
+// a call whose answers never parse leaves descriptions empty instead of stopping the run; backend errors still stop it
+async function softLlm(tag, prompt, what) {
+  try { return await llm(tag, prompt); }
+  catch (e) { if (!e.badAnswer) throw e; log(`warning: could not ${what} (${String(e.message).split('\n')[0].slice(0, 160)}); leaving them blank`); return {}; }
+}
 const STYLE = `Descriptions are for an architecture map that gets more detailed as the reader zooms in. shortDescription: one plain sentence, max ~15 words, says what it does. longDescription: 2-4 sentences, max ~70 words, concrete: responsibilities, key collaborators, notable design choices. No marketing words, no "This module". Answer with ONLY a JSON object, no prose, no code fences.`;
 
 // ---------- 2. modules per package ----------
+// The model never sees or returns every file: the package is folded into at most PLAN_UNITS units (src/units.mjs), the
+// model groups unit ids into modules, and the code assigns the files. Prompt and answer stay small on any repo size.
+function unitLine(u) {
+  if (u.kind === 'file') return `${u.id} ${fileLine(u.files[0])}`;
+  const loc = u.files.reduce((a, f) => a + files.get(f).loc, 0);
+  const top = [...u.files].sort((a, b) => keyFileScore(b) - keyFileScore(a)).slice(0, 4);
+  const exps = top.flatMap((f) => files.get(f).exports.slice(0, 2)).slice(0, 6);
+  return `${u.id} ${u.label} (${u.files.length} files, ${loc} loc; e.g. ${top.map((f) => posix.basename(f)).join(', ')}${exps.length ? '; exports: ' + exps.join(', ') : ''})`;
+}
 async function planPackage(pkg) {
+  const units = buildUnits(pkg.files, { base: pkg.dir, maxUnits: PLAN_UNITS });
   const docs = ['README.md', 'readme.md', 'CONTEXT.md'].map((d) => readSnippet(pkg.dir === '.' ? d : `${pkg.dir}/${d}`, 2500)).filter(Boolean).join('\n---\n');
-  const minMods = Math.min(3, pkg.files.length);
-  const maxMods = Math.min(9, Math.max(minMods, pkg.files.length));
-  const prompt = `You are mapping the architecture of the "${ROOT_NAME}" ${repoKind}, package "${pkg.name}" at ${pkg.dir}.
+  const minMods = Math.min(3, units.length);
+  const maxMods = Math.min(9, Math.max(minMods, units.length));
+  const grouped = units.some((u) => u.kind !== 'file');
+  const prompt = `You are mapping the architecture of the "${ROOT_NAME}" ${repoKind}, package "${pkg.name}" at ${pkg.dir} (${pkg.files.length} source files).
 Package docs (may be empty):
 <<<
 ${docs}
 >>>
-Source files (path, non-empty lines, exports):
-${pkg.files.map(fileLine).join('\n')}
+${grouped ? 'Source units (id, file or folder, size, the biggest files and their exports):' : 'Source files (id, path, non-empty lines, exports):'}
+${units.map(unitLine).join('\n')}
 
-Task: group ALL of these files into between ${minMods} and ${maxMods} cohesive modules (the zoom level below the package). Prefer existing folders as modules (a big folder may be split by subfolder or theme); for flat folders cluster by responsibility (filename prefixes and exports are strong hints). Every file must be in exactly one module; use exact paths.
+Task: group ALL of these ${units.length} units into between ${minMods} and ${maxMods} cohesive modules (the zoom level below the package), by unit id. Prefer existing folders as modules (a big folder may be split by subfolder or theme); for flat folders cluster by responsibility (filename prefixes and exports are strong hints). Every unit must be in exactly one module. List the ids in full (for example ["u1","u2","u3"]); never abbreviate with "..." or ranges.
 ${STYLE}
-Schema: {"package":{"label":"short human label","shortDescription":"...","longDescription":"..."},"modules":[{"key":"kebab-id","label":"Title Case 1-3 words","shortDescription":"...","longDescription":"...","files":["exact/path", ...]}]}`;
-  return llm(`pkg-${pkg.dir}`, prompt);
+Schema: {"package":{"label":"short human label","shortDescription":"...","longDescription":"..."},"modules":[{"key":"kebab-id","label":"Title Case 1-3 words","shortDescription":"...","longDescription":"...","units":["u1","u2"]}]}`;
+  // unit ids as asked ("u3"), or near misses: 3, "U3", " u3 "; exact file paths of the package count too
+  const byId = new Map(units.map((u) => [u.id, u])), inPkg = new Set(pkg.files);
+  const filesOf = (m) => [
+    ...(Array.isArray(m.units) ? m.units : []).flatMap((id) => { const k = String(id).trim().toLowerCase(); return byId.get(/^\d+$/.test(k) ? `u${k}` : k)?.files || []; }),
+    ...(Array.isArray(m.files) ? m.files : []).filter((f) => inPkg.has(f)),
+  ];
+  const modulesOf = (plan) => (Array.isArray(plan.modules) ? plan.modules : []).filter((m) => m && typeof m === 'object').map((m) => ({ ...m, files: filesOf(m) }));
+  try {
+    const plan = await llm(`pkg-${pkg.dir}`, prompt, { validate: (j) => { if (!modulesOf(j).some((m) => m.files.length)) throw badAnswer('the answer put no known unit ids in any module', JSON.stringify(j)); } });
+    return { ...plan, modules: modulesOf(plan) };
+  } catch (e) {
+    if (!e.badAnswer) throw e;
+    // the backend works but its answers don't parse: map the package by folder instead of stopping the run
+    log(`warning: could not plan modules for ${pkg.name} (${String(e.message).split('\n')[0].slice(0, 160)}); grouping by folder instead`);
+    return { package: {}, modules: fallbackModules(units, { base: pkg.dir }) };
+  }
 }
 
 // ---------- 3. key files per module ----------
@@ -195,7 +229,7 @@ ${blocks}
 Task: describe each file for the deepest zoom level of the map. Also pick up to 6 of its most important functions/classes/exports (use real names from the source, add "()" for functions).
 ${STYLE}
 Schema: {"files":{"exact/path":{"label":"filename without extension or a 1-3 word name","shortDescription":"...","longDescription":"...","functions":["name()", ...]}}}`;
-  return llm(`files-${pkg.dir}-${mod.key}`, prompt);
+  return softLlm(`files-${pkg.dir}-${mod.key}`, prompt, `describe the files of ${pkg.name} / ${mod.label}`);
 }
 
 // ---------- assemble ----------
@@ -216,14 +250,14 @@ async function main() {
   const pkgNodes = [];
   const fileJobs = [];
   for (const [pkg, plan] of plans) {
-    const assigned = new Set();
+    const assigned = new Set(), inPkg = new Set(pkg.files);
     const usedKeys = new Set();
     const uniqKey = (k) => { let key = k || 'module', i = 2; while (usedKeys.has(key)) key = `${k || 'module'}-${i++}`; usedKeys.add(key); return key; };
     const mods = (Array.isArray(plan.modules) ? plan.modules : []).filter((m) => m && typeof m === 'object')
-      .map((m) => ({ ...m, label: m.label || m.key || 'Module', files: (Array.isArray(m.files) ? m.files : []).filter((f) => pkg.files.includes(f) && !assigned.has(f) && assigned.add(f)) }))
+      .map((m) => ({ ...m, label: m.label || m.key || 'Module', files: (Array.isArray(m.files) ? m.files : []).filter((f) => inPkg.has(f) && !assigned.has(f) && assigned.add(f)) }))
       .filter((m) => m.files.length).map((m) => ({ ...m, key: uniqKey(slug(m.key || m.label)) }));
     const leftover = pkg.files.filter((f) => !assigned.has(f));
-    if (leftover.length) mods.push({ key: uniqKey('other'), label: 'Other', shortDescription: 'Supporting files not grouped elsewhere.', longDescription: `Remaining files: ${leftover.map((f) => posix.basename(f)).join(', ')}.`, files: leftover });
+    if (leftover.length) mods.push({ key: uniqKey('other'), label: 'Other', shortDescription: 'Supporting files not grouped elsewhere.', longDescription: `Remaining files: ${leftover.slice(0, 40).map((f) => posix.basename(f)).join(', ')}${leftover.length > 40 ? ` and ${leftover.length - 40} more` : ''}.`, files: leftover });
     for (const mod of mods) {
       mod.files.sort((a, b) => keyFileScore(b) - keyFileScore(a));
       mod.keyFiles = mod.files.slice(0, KEY_FILES_PER_MODULE);
@@ -268,10 +302,10 @@ Context map:
 <<<
 ${readSnippet('CONTEXT-MAP.md', 3000) || readSnippet('ARCHITECTURE.md', 3000)}
 >>>
-Packages: ${pkgNodes.map((p) => `${p.packageName} (${p.path}): ${p.shortDescription}`).join('; ')}
+Packages${pkgNodes.length > 40 ? ` (the 40 biggest of ${pkgNodes.length})` : ''}: ${[...pkgNodes].sort((a, b) => b.weight - a.weight).slice(0, 40).map((p) => `${p.packageName} (${p.path}): ${p.shortDescription}`).join('; ')}
 ${STYLE}
 Schema: {"label":"${ROOT_NAME[0].toUpperCase() + ROOT_NAME.slice(1)}","shortDescription":"...","longDescription":"..."}`;
-  const sys = await llm('system', sysPrompt);
+  const sys = await softLlm('system', sysPrompt, 'describe the system');
   const root = { id: 'system', label: sys.label || ROOT_NAME, kind: 'system', path: '.', weight: pkgNodes.reduce((a, p) => a + p.weight, 0),
     shortDescription: sys.shortDescription || '', longDescription: sys.longDescription || '', children: pkgNodes,
     edges: [...pkgEdges].map(([k, w]) => { const [a, b] = k.split('\0'); return { from: `pkg:${a}`, to: `pkg:${b}`, weight: w }; }).sort((x, y) => y.weight - x.weight) };

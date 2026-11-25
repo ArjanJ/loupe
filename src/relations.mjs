@@ -828,7 +828,9 @@ Schema: {"pairs":{"<from> -> <to>":{"label":"...","summary":"..."}}}`;
   for (const p of pairs) { const v = got[`${p.from} -> ${p.to}`]; if (v && typeof v === 'object') rollups[`${p.from}|${p.to}`] = { label: String(v.label || '').slice(0, 48), summary: String(v.summary || '').slice(0, 160) }; }
 }
 const pkgIds = root.children.map((c) => c.id);
-const jobs = [labelPairs('rel-packages', pkgPairs, pkgIds)];
+// like the module pairs below: only the busiest 60 pairs get labels, so a big monorepo's prompt and answer stay small
+const topPkgPairs = [...pkgPairs].sort((a, b) => b.count - a.count).slice(0, 60);
+const jobs = [labelPairs('rel-packages', topPkgPairs, [...new Set(topPkgPairs.flatMap((p) => [p.from, p.to]))])];
 for (const pid of pkgIds) {
   const pairs = modPairs.filter((p) => atDepth(p.from, 1) === pid).sort((a, b) => b.count - a.count).slice(0, 60);
   const ids = [...new Set(pairs.flatMap((p) => [p.from, p.to]))];
@@ -838,8 +840,16 @@ await Promise.all(jobs);
 log('rollup labels', Object.keys(rollups).length);
 
 // ---------------------------------------------------------------- flows (Claude, validated against the map)
-const modIds = [...nodes.keys()].filter((id) => levelOf(id) === 2);
 const topMod = modPairs.filter((p) => p.count >= 2 || !p.kinds.import).sort((a, b) => b.count - a.count).slice(0, 140);
+// at most 120 module nodes in the prompt: the ones in the relationships first, then the biggest
+const modIds = (() => {
+  const all = [...nodes.keys()].filter((id) => levelOf(id) === 2);
+  if (all.length <= 120) return all;
+  const keep = new Set();
+  for (const id of topMod.flatMap((p) => [p.from, p.to])) { if (keep.size >= 120) break; if (levelOf(id) === 2) keep.add(id); }
+  for (const id of [...all].sort((a, b) => (nodes.get(b).weight || 0) - (nodes.get(a).weight || 0))) { if (keep.size >= 120) break; keep.add(id); }
+  return all.filter((id) => keep.has(id));
+})();
 const flowPrompt = `You are explaining how the "${root.label}" codebase works end to end, for an interactive architecture map.
 System: ${root.shortDescription}
 Map nodes (module level, plus external services):

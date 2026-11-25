@@ -250,19 +250,36 @@ async function runOpenAI(b, prompt) {
 }
 const RUN = { claude: runClaude, anthropic: runAnthropic, openai: runOpenAI };
 
-function parseJson(text) {
-  const s = text.indexOf('{'), e = text.lastIndexOf('}');
-  if (s < 0 || e < 0) throw new Error('no JSON in LLM output: ' + text.slice(0, 200));
-  return JSON.parse(text.slice(s, e + 1));
+// The first complete JSON object in a model's answer: prose, code fences or a second object around it are ignored.
+// Throws an error with badAnswer set (the backend works, the answer doesn't), carrying the raw text for debugging.
+export const badAnswer = (msg, raw) => Object.assign(new Error(msg), { badAnswer: true, raw });
+export function parseJson(text) {
+  text = String(text);
+  let firstErr;
+  for (let s = text.indexOf('{'), e; s >= 0; s = text.indexOf('{', e + 1)) {
+    // scan to the brace that closes this one, skipping braces inside strings
+    let depth = 0, inStr = false, esc = false; e = -1;
+    for (let i = s; i < text.length; i++) {
+      const c = text[i];
+      if (inStr) { if (esc) esc = false; else if (c === '\\') esc = true; else if (c === '"') inStr = false; continue; }
+      if (c === '"') inStr = true; else if (c === '{') depth++; else if (c === '}' && --depth === 0) { e = i; break; }
+    }
+    const cand = e < 0 ? text.slice(s) : text.slice(s, e + 1);
+    try { const j = JSON.parse(cand); if (j && typeof j === 'object' && !Array.isArray(j)) return j; }
+    catch (err) { firstErr ??= err; }
+    if (e < 0) e = s; // unterminated (a stray brace in prose?): try the next brace
+  }
+  if (firstErr) throw badAnswer(`invalid JSON in LLM output: ${firstErr.message}`, text);
+  throw badAnswer('no JSON in LLM output: ' + text.slice(0, 200), text);
 }
 // The cache may sit inside the (untrusted) repo: only regular files count, never symlinks, and a bad entry is a miss.
 function readCache(cp) {
   try { if (!lstatSync(cp).isFile()) return null; const j = JSON.parse(readFileSync(cp, 'utf8')); return j && typeof j === 'object' && !Array.isArray(j) ? j : null; } catch { return null; }
 }
-function writeCache(cp, json) {
+function writeCache(cp, json, asJson = true) {
   try { unlinkSync(cp); } catch {}
   // 'wx' never follows a symlink; EEXIST means a parallel identical call just wrote the same answer
-  try { writeFileSync(cp, JSON.stringify(json, null, 2), { flag: 'wx' }); } catch (e) { if (e.code !== 'EEXIST') throw e; }
+  try { writeFileSync(cp, asJson ? JSON.stringify(json, null, 2) : json, { flag: 'wx' }); } catch (e) { if (e.code !== 'EEXIST') throw e; }
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -285,7 +302,9 @@ export function createLlm({ cache, log, nollm = false, onFail = 'throw', trustCa
   function pump() { while (running < CONCURRENCY && queue.length) { const { fn, res, rej } = queue.shift(); running++; fn().then(res, rej).finally(() => { running--; pump(); }); } }
   // claude keeps the original key (model + prompt) so existing caches stay valid; API backends also hash in their name
   const keyFor = (b, prompt) => createHash('sha256').update((b.name === 'claude' ? '' : `${b.name}:`) + (b.model || 'default') + prompt).digest('hex').slice(0, 16);
-  async function llm(tag, prompt) {
+  // validate(json), if given, throws badAnswer(...) for a parsed answer that still can't be used: it is retried like
+  // broken JSON and never cached
+  async function llm(tag, prompt, { validate } = {}) {
     const b = getBackend() || fallback(); // unresolved: still look in the cache
     // tags carry repo-derived names: keep them short enough for a file name
     const cp = join(cache, `${tag.replace(/[^a-z0-9]+/gi, '_').slice(0, 100)}-${keyFor(b, prompt)}.json`);
@@ -294,17 +313,25 @@ export function createLlm({ cache, log, nollm = false, onFail = 'throw', trustCa
     if (nollm) return {};
     if (backendErr) { stats.failed++; log('llm fail', tag, backendErr.message.split('\n')[0]); if (onFail === 'empty') return {}; throw backendErr; }
     return limit(async () => {
+      let ask = prompt;
       for (let attempt = 1; attempt <= 3; attempt++) {
         try {
           const t0 = Date.now(); if (chatty) log('llm start', tag);
-          const json = parseJson(await RUN[b.name](b, prompt));
-          if (trustCache) writeCache(cp, json);
+          const json = parseJson(await RUN[b.name](b, ask));
+          if (validate) validate(json);
+          if (trustCache) { writeCache(cp, json); try { unlinkSync(cp.replace(/\.json$/, '.fail.txt')); } catch {} }
           stats.fresh++;
           if (chatty) log('llm done', tag, `${((Date.now() - t0) / 1000).toFixed(0)}s`);
           return json;
         } catch (e) {
           log('llm fail', tag, attempt, String(e.message).slice(0, 200));
-          if (attempt === 3 || e.retry === false) { stats.failed++; if (onFail === 'empty') return {}; throw e; }
+          if (attempt === 3 || e.retry === false) {
+            stats.failed++;
+            if (e.badAnswer && trustCache) { const fp = cp.replace(/\.json$/, '.fail.txt'); try { writeCache(fp, String(e.raw ?? ''), false); log('llm fail', tag, `raw answer saved to ${fp}`); } catch {} }
+            if (onFail === 'empty') return {}; throw e;
+          }
+          // the next try sees why the last answer was refused (the cache key stays the original prompt)
+          if (e.badAnswer) ask = `${prompt}\n\nYour previous answer could not be used: ${String(e.message).slice(0, 300)}. Answer again with ONLY one complete, valid JSON object matching the schema, with every list written out in full.`;
           if (e.retry) await sleep(Math.min(60_000, (e.retryAfter || 2 ** attempt) * 1000));
         }
       }
