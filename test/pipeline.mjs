@@ -105,6 +105,8 @@ function checkMap(dir, r, what) {
   check(!r.all.includes(KEY), `${what}: key never printed`);
   const tree = JSON.parse(readFileSync(join(dir, '.loupe', 'tree.json'), 'utf8'));
   check(Array.isArray(tree.root.relations) && tree.root.relations.some((x) => x.kind === 'http'), `${what}: relations found the http route`, JSON.stringify(tree.root.relations));
+  const head = execFileSync(gitBin, ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
+  check(tree.meta.commit === head && tree.meta.dirty === false && !isNaN(Date.parse(tree.meta.generatedAt)), `${what}: meta records the full commit, clean worktree and date`, JSON.stringify(tree.meta));
 }
 
 try {
@@ -834,6 +836,37 @@ try {
     // three aliased imports resolve (src/*, $lib, baseUrl); the npm import (@nestjs/common) does not
     const nImp = Number((r.all.match(/\[rel\] imports (\d+)/) || [])[1]);
     check(r.code === 0 && nImp === 3, 'relations: tsconfig "paths" (JSONC + extends), "baseUrl" and SvelteKit $lib imports resolve', `imports=${nImp}\n` + r.all);
+  }
+
+  // ---------- CommonJS require() ----------
+  {
+    const cj = join(TMP, 'commonjs');
+    const writeCj = (rel, content) => { const full = join(cj, rel); mkdirSync(dirname(full), { recursive: true }); writeFileSync(full, content); };
+    writeCj('package.json', JSON.stringify({ name: 'cjs-app', version: '1.0.0' }));
+    writeCj('lib/server.js', [
+      `const express = require('express');`,
+      `const {`,
+      `  createTask,`,
+      `  eta: computeEta,`,
+      `} = require('./services/tasks');`,
+      `const repo = require('./db/repo');`,
+      `const notify = require('./notify').sms;`,
+      `require('./init');`,
+      `// const ghost = require('./ghost');`,
+      `const app = express();`,
+      `app.post('/tasks', (req, res) => res.json(createTask(req.body, computeEta, repo, notify)));`,
+    ].join('\n') + '\n');
+    writeCj('lib/services/tasks.js', `exports.createTask = (t) => t;\nexports.eta = () => 5;\n`);
+    writeCj('lib/db/repo.js', `module.exports = { save: (x) => x };\n`);
+    writeCj('lib/notify.js', `exports.sms = () => true;\n`);
+    writeCj('lib/init.js', `process.env.TZ = 'UTC';\n`);
+    writeCj('lib/ghost.js', `module.exports = 1;\n`);
+    const gcj = (...a) => execFileSync(gitBin, a, { cwd: cj, stdio: 'pipe' });
+    gcj('init', '-q'); gcj('add', '-A'); gcj('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'init');
+    r = await run(['map', cj, '--no-open', '--backend', 'openai'], { ...stEnv, LOUPE_NOLLM: '1' });
+    // destructured (multi-line), default, `.prop` and bare requires resolve; the npm require and the commented-out one do not
+    const nCj = Number((r.all.match(/\[rel\] imports (\d+)/) || [])[1]);
+    check(r.code === 0 && nCj === 4, 'relations: CommonJS require() (destructured, default, .prop, bare) resolves; comments and npm packages are skipped', `imports=${nCj}\n` + r.all);
   }
 
   // ---------- JS/TS private class fields are not treated as # comments ----------

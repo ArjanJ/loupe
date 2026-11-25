@@ -34,7 +34,10 @@ try {
 
 // ---------- 1. structure ----------
 const gitFiles = git(REPO, ['ls-files', '-z'], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 }).split('\0').filter(Boolean);
-const commit = git(REPO, ['rev-parse', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
+const commit = git(REPO, ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+// tracked files with uncommitted edits (untracked files don't count: the map only reads tracked ones)
+let dirty = false;
+try { dirty = git(REPO, ['status', '--porcelain', '--untracked-files=no'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] }).trim().length > 0; } catch {}
 // Untrusted repo: every file Loupe reads is tracked by git, not secret-looking, a regular file of at most 1 MiB, with
 // no symlink on the way (a tracked `src/config.ts -> ../.env.local` must not send the ignored secret as source). On top:
 //   source   not LOUPE_IGNOREd; tracked files matching .gitignore are left to gitSourceFilters, where .gitattributes can re-include them
@@ -275,7 +278,7 @@ Schema: {"label":"${ROOT_NAME[0].toUpperCase() + ROOT_NAME.slice(1)}","shortDesc
 
   let nodeCount = 0, edgeCount = 0; const perLevel = [];
   (function walk(n, d) { nodeCount++; edgeCount += n.edges.length; perLevel[d] = (perLevel[d] || 0) + 1; n.children.forEach((c) => walk(c, d + 1)); })(root, 0);
-  const meta = { source: repoSource(), commit, generatedAt: new Date().toISOString(), backend: llm.backend()?.name || '', model: llm.backend()?.model || process.env.LOUPE_MODEL || '', levels: perLevel.length, levelNames: ['system', 'packages', 'modules', 'files'], nodesPerLevel: perLevel, nodeCount, edgeCount, sourceFiles: files.size };
+  const meta = { source: repoSource(), commit, dirty, generatedAt: new Date().toISOString(), backend: llm.backend()?.name || '', model: llm.backend()?.model || process.env.LOUPE_MODEL || '', levels: perLevel.length, levelNames: ['system', 'packages', 'modules', 'files'], nodesPerLevel: perLevel, nodeCount, edgeCount, sourceFiles: files.size };
   safeWriteFile(OUT, JSON.stringify({ meta, root }, null, 2), { withinDir: within(REPO, OUT) ? REPO : null });
   // ids must be unique across the whole tree; the viewer relies on it
   // sidecar for scripts/relations.mjs: every source file -> the deepest tree node that holds it

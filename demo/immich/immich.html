@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-ZP09+Wb23+M3ed2z04TFIADJeE7VkyOtDXV57ok/wrs=' 'sha256-NN68fbaO8tj5q9CWLO3jyO0nsoZM20eEVAUgYfHaWek='; style-src 'unsafe-inline'; font-src data:; img-src data:; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-ZP09+Wb23+M3ed2z04TFIADJeE7VkyOtDXV57ok/wrs=' 'sha256-miS6IIk8MzdaV+Mi8QJEdnrJ2c5lZIZ+bofaK0VOeqY='; style-src 'unsafe-inline'; font-src data:; img-src data:; base-uri 'none'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>Loupe</title>
 <script>
@@ -79,6 +79,18 @@
   #hint { position: fixed; left: 50%; bottom: 84px; transform: translateX(-50%); font-size: 12px; color: var(--label-3);
     pointer-events: none; transition: opacity .6s ease; white-space: nowrap; letter-spacing: -0.003em; }
   #hint.gone { opacity: 0; }
+  /* which commit the map reflects: quiet text in the bottom-left corner, hidden when the toolbar would cover it */
+  #stamp { position: fixed; left: 20px; bottom: 16px; display: flex; align-items: center; gap: 6px; max-width: calc(50vw - 40px);
+    font: 500 11px var(--mono); letter-spacing: .01em; color: var(--label-3); opacity: .8; white-space: nowrap; user-select: none; }
+  #stamp[hidden], #stamp.clash { display: none; }
+  #stamp .sep { opacity: .7; }
+  #stamp.compact .when { display: none; }
+  #stamp button, #stamp a { font: inherit; letter-spacing: inherit; color: inherit; background: none; border: 0; padding: 2px 4px; margin: 0 -4px;
+    border-radius: 6px; cursor: pointer; text-decoration: none; transition: background-color .15s, color .15s; }
+  #stamp a { margin: 0 -2px; padding: 2px; }
+  #stamp button:hover, #stamp a:hover { color: var(--label); background: var(--press); }
+  #stamp a:focus-visible { outline: 3px solid color-mix(in srgb, var(--focus) 55%, transparent); outline-offset: 1px; }
+  #stamp span { overflow: hidden; text-overflow: ellipsis; }
 
   #tip { position: fixed; pointer-events: none; max-width: 300px; padding: 10px 12px; display: block; opacity: 0; box-sizing: border-box;
     background: var(--glass); border-radius: 12px; box-shadow: var(--glass-shadow); transition: opacity .18s ease;
@@ -208,6 +220,7 @@
 <aside id="insp" class="glass" aria-label="Relationships" aria-hidden="true"></aside>
 <div id="toast" role="status" aria-live="polite"></div>
 <div id="hint">Scroll or pinch to zoom in · Drag to pan</div>
+<footer id="stamp" hidden></footer>
 <div id="tip" aria-hidden="true"><div id="tipLabel"></div><div id="tipDesc"></div><div id="tipPath"></div></div>
 <div id="empty"><div>No tree is inlined in this file.<br>Build it with <code>loupe render &lt;tree.json&gt; [out.html]</code>.</div></div>
 <script>
@@ -2221,8 +2234,7 @@ const DATA = {"meta":{"source":"github.com/immich-app/immich","commit":"08fe047"
     themePref = NEXT[themePref];
     try { if (themePref === 'system') localStorage.removeItem(THEME_KEY); else localStorage.setItem(THEME_KEY, themePref); } catch (e) {}
     applyTheme();
-    toast.textContent = `Appearance: ${THEME_NAMES[themePref]}`; toast.classList.add('on');
-    clearTimeout(toastTimer); toastTimer = setTimeout(() => toast.classList.remove('on'), 1300);
+    showToast(`Appearance: ${THEME_NAMES[themePref]}`);
   });
   drawThemeIcon();
   if (darkQuery) {
@@ -2231,6 +2243,61 @@ const DATA = {"meta":{"source":"github.com/immich-app/immich","commit":"08fe047"
   }
   // another tab changed the choice
   window.addEventListener('storage', (e) => { if (e.key === THEME_KEY) { themePref = e.newValue === 'light' || e.newValue === 'dark' ? e.newValue : 'system'; applyTheme(); } });
+
+  // ---------------------------------------------------------------- commit + date stamp (bottom-left)
+  const stamp = $('stamp');
+  function showToast(text) {
+    toast.textContent = text; toast.classList.add('on');
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => toast.classList.remove('on'), 1300);
+  }
+  async function copyText(text) {
+    try { await navigator.clipboard.writeText(text); return true; } catch (e) {}
+    const ta = document.createElement('textarea'); ta.value = text; ta.setAttribute('readonly', ''); ta.style.cssText = 'position:fixed;opacity:0;pointer-events:none';
+    document.body.appendChild(ta); ta.select();
+    let ok = false; try { ok = document.execCommand('copy'); } catch (e) {}
+    ta.remove(); return ok;
+  }
+  function buildStamp() {
+    const meta = DATA.meta || {};
+    const sha = typeof meta.commit === 'string' && /^[0-9a-f]{4,64}$/i.test(meta.commit) ? meta.commit.toLowerCase() : '';
+    const when = typeof meta.generatedAt === 'string' ? new Date(meta.generatedAt) : null;
+    const date = when && !isNaN(when) ? when.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '';
+    const parts = [];
+    const text = (t) => { const s = document.createElement('span'); s.textContent = t; return s; };
+    if (sha) {
+      const short = sha.slice(0, 7);
+      const b = document.createElement('button'); b.type = 'button'; b.id = 'stampSha'; b.textContent = short;
+      b.title = `Commit ${sha}${meta.dirty === true ? ', with uncommitted changes to tracked files' : ''}. Click to copy.`;
+      b.setAttribute('aria-label', `Commit ${short}. Copy full commit hash`);
+      b.addEventListener('click', async () => { showToast(await copyText(sha) ? 'Commit hash copied' : `Commit ${sha}`); });
+      parts.push(b);
+      // "github.com/owner/repo" (see src/generate.mjs repoSource) -> a link to the commit on GitHub
+      const gh = typeof meta.source === 'string' && meta.source.match(/^github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/);
+      if (gh && meta.dirty !== true) {
+        const a = document.createElement('a'); a.id = 'stampLink'; a.href = `https://github.com/${gh[1]}/${gh[2]}/commit/${sha}`;
+        a.target = '_blank'; a.rel = 'noopener noreferrer'; a.textContent = '\u2197'; a.title = 'Open this commit on GitHub'; a.setAttribute('aria-label', 'Open this commit on GitHub');
+        parts.push(a);
+      }
+      if (meta.dirty === true) parts.push(text('\u00b7'), text('modified'));
+    }
+    if (date) { const d = [text(`Generated ${date}`)]; if (parts.length) d.unshift(text('\u00b7')); d.forEach((x) => x.classList.add('when')); parts.push(...d); }
+    for (const p of parts) if (p.tagName === 'SPAN' && p.textContent === '\u00b7') { p.classList.add('sep'); p.setAttribute('aria-hidden', 'true'); }
+    if (!parts.length) return;
+    stamp.replaceChildren(...parts); stamp.hidden = false;
+    stamp.setAttribute('aria-label', 'Map source');
+  }
+  // the toolbar is centred and grows with the breadcrumb: drop the stamp rather than let the two overlap
+  function placeStamp() {
+    if (stamp.hidden) return;
+    const h = $('hud').getBoundingClientRect();
+    const hits = () => { const a = stamp.getBoundingClientRect(); return a.right + 12 > h.left && a.top < h.bottom && a.bottom > h.top; };
+    stamp.classList.remove('clash', 'compact');
+    if (hits() && stamp.querySelector('.when')) stamp.classList.add('compact'); // drop the date first
+    if (hits()) stamp.classList.add('clash');
+  }
+  buildStamp(); placeStamp();
+  window.addEventListener('resize', placeStamp);
+  if (window.ResizeObserver) new ResizeObserver(placeStamp).observe(hud);
 
   // ---------------------------------------------------------------- boot + test hook
   resize();
@@ -2267,6 +2334,7 @@ const DATA = {"meta":{"source":"github.com/immich-app/immich","commit":"08fe047"
     stopFlow() { stopFlow(); openPop(null); },
     relations: RELS.length,
     degree(id) { const n = byId.get(id); return n ? RELS.filter((r) => within(n, r.a) !== within(n, r.b)).length : 0; },
+    stamp() { return { shown: !stamp.hidden && !stamp.classList.contains('clash'), text: stamp.textContent, title: $('stampSha')?.title || '', link: $('stampLink')?.href || '' }; },
     theme() { return { pref: themePref, resolved: T === THEMES.dark ? 'dark' : 'light', attr: document.documentElement.getAttribute('data-theme') }; },
     setTheme(p) { themePref = p === 'light' || p === 'dark' ? p : 'system'; applyTheme(); },
     checkText() { textCheck.on = true; textCheck.violations = []; textCheck.drawn = 0; render(); textCheck.on = false; return { drawn: textCheck.drawn, violations: textCheck.violations.slice() }; },
