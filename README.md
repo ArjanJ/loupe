@@ -48,6 +48,7 @@ Useful environment variables:
 | --- | --- | --- |
 | `LOUPE_IGNORE` | none | regex of paths to skip, e.g. `^(examples\|docs)/` |
 | `LOUPE_CONCURRENCY` | `6` | parallel model calls |
+| `LOUPE_PLAN_UNITS` | `60` | most folders or files shown to the model when it groups a package into modules; bigger packages are folded into folders first |
 | `LOUPE_EFFORT` | backend default | `low`, `medium`, `high`, `xhigh`, or `max` |
 | `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` | official APIs | point at a proxy or compatible server (https, or http on localhost) |
 | `LOUPE_ALLOW_HTTP` | off | `1` allows a plain `http://` base URL on a network you trust |

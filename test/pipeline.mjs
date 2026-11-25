@@ -3,7 +3,7 @@
 // Usage: node test/pipeline.mjs
 import { createServer } from 'node:http';
 import { spawn, execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, chmodSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync, symlinkSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, delimiter } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -51,7 +51,11 @@ const writeFakeClaude = (dir, helpText) => {
 const fs = require('node:fs');
 if (process.argv.includes('--help')) { process.stdout.write(${JSON.stringify(helpText)}); process.exit(0); }
 const prompt = fs.readFileSync(0, 'utf8');
-fs.appendFileSync(${JSON.stringify(fakeClaudeLog)}, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd() }) + '\\n');
+const schema = prompt.slice(prompt.lastIndexOf('Schema: {"'), prompt.lastIndexOf('Schema: {"') + 20);
+fs.appendFileSync(${JSON.stringify(fakeClaudeLog)}, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd(), len: prompt.length, schema, retry: prompt.includes('Your previous answer could not be used'), pairs: (prompt.match(/^\\S+ -> \\S+ \\|/gm) || []).length }) + '\\n');
+// STUB_BROKEN=<schema start>: answer that kind of prompt with JSON cut short by "...", like a model eliding a long list
+if (process.env.STUB_UNUSABLE && schema.startsWith('Schema: {"package"')) { process.stdout.write('{"modules":[{"key":"a","units":["zz9"]}]}'); process.exit(0); }
+if (process.env.STUB_BROKEN && schema.startsWith('Schema: {"' + process.env.STUB_BROKEN)) { process.stdout.write('{"modules":[{"key":"a","units":["u1", ...]}]}\\nHope that helps! {see above}'); process.exit(0); }
 import(${JSON.stringify(pathToFileURL(join(ROOT, 'test', '_stub-model.mjs')).href)}).then(({ answer }) => process.stdout.write('Here you go:\\n' + JSON.stringify(answer(prompt))));
 `);
   chmodSync(join(dir, 'claude'), 0o755);
@@ -425,7 +429,6 @@ try {
     r = await run(['map', f4, '--no-open', '--backend', 'openai'], stEnv);
     check(r.code === 0, 'tracked cache: setup run', r.all);
     const cacheDir = join(f4, '.loupe', 'cache');
-    const { readdirSync } = await import('node:fs');
     for (const f of readdirSync(cacheDir)) {
       if (f.startsWith('system-')) writeFileSync(join(cacheDir, f), JSON.stringify({ label: 'POISONED SYSTEM', shortDescription: 'Poisoned.', longDescription: 'Poisoned.' }));
     }
@@ -907,6 +910,75 @@ try {
     const hasDb = rels.some((x) => x.kind === 'db' && x.to === 'file:prisma/schema.prisma');
     const hasPyCommentGithub = rels.some((x) => x.to === 'ext:github');
     check(r.code === 0 && hasSlack && hasDb && !hasPyCommentGithub, 'relations: JS/TS private fields (#slack, #db) detected while # stays a comment in Python', JSON.stringify(rels));
+  }
+
+  // ---------- any repo size: prompts stay bounded, bad answers degrade instead of stopping ----------
+  {
+    const commitAll = (dir) => { const g = (...a) => execFileSync(gitBin, a, { cwd: dir, stdio: 'pipe' }); g('init', '-q'); g('add', '-A'); g('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'init'); };
+    const put = (dir, f, text) => { mkdirSync(dirname(join(dir, f)), { recursive: true }); writeFileSync(join(dir, f), text); };
+    const scaleEnv = (extra = {}) => childEnv({ PATH: [fakeClaudeDir, noClaudeDir].join(delimiter), LOUPE_CONCURRENCY: '16', ...extra });
+    const callsSince = (n) => claudeCalls().slice(n);
+
+    // one package, 2,600 files: deep folders, a flat folder of 900 files, 400 small subfolders
+    const big = join(TMP, 'scale-big');
+    put(big, 'package.json', JSON.stringify({ name: 'big-app', version: '1.0.0', type: 'module' }));
+    for (let i = 0; i < 600; i++) put(big, `src/features/f${i % 30}/part${i}.ts`, `export const part${i} = ${i};\n`);
+    for (let i = 0; i < 900; i++) put(big, `src/flat/${['user', 'order', 'invoice'][i % 3]}_${i}.ts`, `export function fn${i}() { return ${i}; }\n`);
+    for (let i = 0; i < 1100; i++) put(big, `lib/mod${i % 400}/x${i}.py`, `def f${i}():\n    return ${i}\n`);
+    commitAll(big);
+    let n0 = claudeCalls().length;
+    r = await run(['map', big, '--no-open'], scaleEnv(), { timeout: 300_000 });
+    let calls = callsSince(n0);
+    const pkgCall = calls.find((c) => c.schema.startsWith('Schema: {"package"'));
+    const sidecar = existsSync(join(big, '.loupe', 'tree.files.json')) ? JSON.parse(readFileSync(join(big, '.loupe', 'tree.files.json'), 'utf8')) : {};
+    check(r.code === 0, 'scale: a 2,600-file single package maps', r.all.slice(-3000));
+    check(pkgCall && pkgCall.len < 20_000, `scale: the module-planning prompt stays small (${pkgCall?.len} chars for 2,600 files)`);
+    check(calls.every((c) => c.len < 60_000), `scale: every prompt stays under 60k chars (max ${Math.max(...calls.map((c) => c.len))})`);
+    check(Object.keys(sidecar).length === 2600, `scale: every file lands in the map (${Object.keys(sidecar).length}/2600)`);
+
+    // a model whose planning answers never parse: retried with the error, raw answer kept, map grouped by folder
+    const broken = join(TMP, 'scale-broken');
+    put(broken, 'package.json', JSON.stringify({ name: 'broken-app', version: '1.0.0', type: 'module' }));
+    for (let i = 0; i < 120; i++) put(broken, `${['api', 'web', 'jobs'][i % 3]}/m${i}.ts`, `export const m${i} = 1;\n`);
+    commitAll(broken);
+    n0 = claudeCalls().length;
+    r = await run(['map', broken, '--no-open'], scaleEnv({ STUB_BROKEN: 'package' }), { timeout: 120_000 });
+    calls = callsSince(n0).filter((c) => c.schema.startsWith('Schema: {"package"'));
+    const bt = existsSync(join(broken, '.loupe', 'tree.json')) ? JSON.parse(readFileSync(join(broken, '.loupe', 'tree.json'), 'utf8')) : null;
+    const mods = bt?.root?.children?.[0]?.children?.map((m) => m.label) || [];
+    check(r.code === 0 && /grouping by folder instead/.test(r.all), 'bad answers: the run finishes with a warning instead of exit 1', r.all.slice(-3000));
+    check(calls.length === 3 && !calls[0].retry && calls[1].retry && calls[2].retry, 'bad answers: retries tell the model why its answer was refused', JSON.stringify(calls));
+    check(['Api', 'Web', 'Jobs'].every((l) => mods.includes(l)), `bad answers: modules fall back to folders (${mods.join(', ')})`);
+    const fails = existsSync(join(broken, '.loupe', 'cache')) ? readdirSync(join(broken, '.loupe', 'cache')).filter((f) => f.endsWith('.fail.txt')) : [];
+    check(fails.length === 1 && readFileSync(join(broken, '.loupe', 'cache', fails[0]), 'utf8').includes('"u1", ...'), 'bad answers: the raw answer is saved next to the cache', fails.join(', '));
+
+    // valid JSON that names no real unit: retried, never cached, so the next run asks again and gets real modules
+    const unusable = join(TMP, 'scale-unusable');
+    put(unusable, 'package.json', JSON.stringify({ name: 'unusable-app', version: '1.0.0', type: 'module' }));
+    for (let i = 0; i < 12; i++) put(unusable, `src/u${i}.ts`, `export const u${i} = 1;\n`);
+    commitAll(unusable);
+    r = await run(['map', unusable, '--no-open'], scaleEnv({ STUB_UNUSABLE: '1' }), { timeout: 120_000 });
+    check(r.code === 0 && /grouping by folder instead/.test(r.all), 'unusable plan: falls back with a warning', r.all.slice(-2000));
+    n0 = claudeCalls().length;
+    r = await run(['map', unusable, '--no-open'], scaleEnv(), { timeout: 120_000 });
+    const ut = existsSync(join(unusable, '.loupe', 'tree.json')) ? JSON.parse(readFileSync(join(unusable, '.loupe', 'tree.json'), 'utf8')) : null;
+    check(r.code === 0 && callsSince(n0).some((c) => c.schema.startsWith('Schema: {"package"')) && ut?.root?.children?.[0]?.children?.[0]?.label === 'Core', 'unusable plan: not cached, the next run plans again', r.all.slice(-2000));
+
+    // a monorepo of 80 packages that import each other: the package-pair labelling prompt is capped
+    const mono = join(TMP, 'scale-mono');
+    put(mono, 'package.json', JSON.stringify({ name: 'mono', private: true, workspaces: ['packages/*'] }));
+    for (let i = 0; i < 80; i++) {
+      put(mono, `packages/p${i}/package.json`, JSON.stringify({ name: `@m/p${i}`, version: '1.0.0', type: 'module' }));
+      const deps = [1, 2, 3, 5].map((d) => (i + d) % 80);
+      put(mono, `packages/p${i}/src/index.ts`, deps.map((d) => `import { v as v${d} } from '@m/p${d}';`).join('\n') + `\nexport const v = ${i};\n`);
+    }
+    commitAll(mono);
+    n0 = claudeCalls().length;
+    r = await run(['map', mono, '--no-open'], scaleEnv(), { timeout: 300_000 });
+    calls = callsSince(n0);
+    const relPkg = calls.filter((c) => c.schema.startsWith('Schema: {"pairs"')).map((c) => c.pairs);
+    check(r.code === 0, 'scale: an 80-package monorepo maps', r.all.slice(-3000));
+    check(relPkg.length > 0 && Math.max(...relPkg) <= 60, `scale: relationship-labelling prompts list at most 60 pairs (${relPkg.join(', ')})`);
   }
 } finally {
   server.close();
