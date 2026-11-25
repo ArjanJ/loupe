@@ -1,35 +1,133 @@
 name: Publish
 
-# Publishes @arjanj/loupe to npm via trusted publishing (OIDC).
-# No npm token is stored or used: npm exchanges the GitHub OIDC token for a
-# short-lived publish credential. The workflow filename (publish.yml) must match
-# the Trusted Publisher config on npmjs.com.
+# Versions and publishes @arjanj/loupe with Changesets.
+#
+# On every push to main, select-mode decides what to do:
+# - "version": unreleased changesets exist. Open or update the "Version Packages"
+#   PR, which bumps package.json/package-lock.json and writes CHANGELOG.md.
+# - "publish": no changesets, and package.json has a version that isn't on npm
+#   yet (the Version Packages PR was just merged). Test, pack, publish, then tag
+#   vX.Y.Z and create the GitHub Release.
+# - "none": nothing to release.
+#
+# Publishing uses npm trusted publishing (OIDC). No npm token is stored or used.
+# The workflow filename (publish.yml) must match the Trusted Publisher config on
+# npmjs.com. Only the publish job gets id-token: write.
+#
+# Layout follows https://changesets.dev/guide/automating#trusted-publishing.
 
 on:
-  release:
-    types: [published]
+  push:
+    branches: [main]
+  # Manual runs only do the dry-run job below; real releases go through the
+  # Version Packages PR.
   workflow_dispatch:
-    inputs:
-      dry_run:
-        description: 'Dry run (default on): install, test and pack/validate with npm publish --dry-run, without publishing. Uncheck only on main to publish for real.'
-        type: boolean
-        default: true
 
-permissions:
-  contents: read
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
 
 jobs:
-  publish:
+  select-mode:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    outputs:
+      mode: ${{ steps.select-mode.outputs.mode }}
+      publish-plan-artifact-id: ${{ steps.select-mode.outputs.publish-plan-artifact-id }}
     permissions:
       contents: read
-      id-token: write # required for npm trusted publishing (OIDC)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - run: npm ci
+      - id: select-mode
+        uses: changesets/action/select-mode@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
+
+  version:
+    if: needs.select-mode.outputs.mode == 'version'
+    needs: select-mode
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # commit version changes to the changeset-release/main branch
+      pull-requests: write # open or update the Version Packages PR
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - run: npm ci
+      # version-packages runs `changeset version` and then refreshes
+      # package-lock.json, which changesets doesn't update on its own.
+      - uses: changesets/action/version@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
+        with:
+          script: npm run version-packages
+
+  pack:
+    if: needs.select-mode.outputs.mode == 'publish'
+    needs: select-mode
+    runs-on: ubuntu-latest
+    outputs:
+      pack-dir-artifact-id: ${{ steps.pack.outputs.pack-dir-artifact-id }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - run: npm ci
+      # Full suite on the exact commit being released; a failure stops the publish.
+      - run: npx playwright install --with-deps chromium
+      - run: npm test
+      - id: pack
+        uses: changesets/action/pack@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
+        with:
+          publish-plan-artifact-id: ${{ needs.select-mode.outputs.publish-plan-artifact-id }}
+
+  publish:
+    needs: pack
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the vX.Y.Z tag and create the GitHub Release
+      id-token: write # npm trusted publishing (OIDC)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       # Node 24 ships npm >= 11.5.1, which trusted publishing requires.
-      # No package-manager cache in release builds.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - run: npm ci
+      # Publishes the tarballs from the pack job; provenance is attached
+      # automatically with trusted publishing.
+      - uses: changesets/action/publish@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
+        with:
+          pack-dir-artifact-id: ${{ needs.pack.outputs.pack-dir-artifact-id }}
+
+  # Manual validation: Actions → Publish → Run workflow. Never publishes.
+  dry-run:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
@@ -38,41 +136,4 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm test
-
-      # Only releases have a tag; workflow_dispatch runs skip this check.
-      - name: Check release tag matches package.json version
-        if: github.event_name == 'release'
-        env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: |
-          tag_version="${RELEASE_TAG#v}"
-          pkg_version="$(node -p "require('./package.json').version")"
-          if [ "$tag_version" != "$pkg_version" ]; then
-            echo "::error::Release tag '$RELEASE_TAG' (version $tag_version) does not match package.json version $pkg_version."
-            exit 1
-          fi
-          echo "Release tag $RELEASE_TAG matches package.json version $pkg_version."
-
-      # A manual run with dry_run unchecked is only allowed from main, so a
-      # feature-branch dispatch cannot publish. Releases already publish the
-      # tagged commit after the version guard above.
-      - name: Refuse a real publish from a non-main ref
-        if: github.event_name == 'workflow_dispatch' && !inputs.dry_run && github.ref != 'refs/heads/main'
-        run: |
-          echo "::error::A real publish from workflow_dispatch is only allowed from main (got ${GITHUB_REF}). Keep dry_run checked, or run the workflow from main."
-          exit 1
-
-      # Dry run lets a maintainer validate the package contents and publish
-      # path from workflow_dispatch without uploading anything. dry_run
-      # defaults to true so an accidental Actions-UI run cannot publish.
-      - name: Publish (dry run)
-        if: github.event_name == 'workflow_dispatch' && inputs.dry_run
-        run: npm publish --dry-run --access public
-
-      # Provenance is generated automatically with trusted publishing, so no
-      # --provenance flag. No NODE_AUTH_TOKEN: a token would override OIDC.
-      # Real publishes: GitHub Releases, or a manual run from main with
-      # dry_run unchecked.
-      - name: Publish
-        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run && github.ref == 'refs/heads/main')
-        run: npm publish --access public
+      - run: npm publish --dry-run --access public
