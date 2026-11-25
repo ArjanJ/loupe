@@ -3,7 +3,7 @@
 // Usage: loupe map [repoDir] [--out file.html] [--no-open] [--backend claude|anthropic|openai] [--model name] [--verbose]
 // In a terminal with no --backend/--model (or LOUPE_BACKEND/LOUPE_MODEL) it first asks which model to use (src/picker.mjs)
 // and remembers the answer in <repoDir>/.loupe/config.json as the next run's preselection.
-// Output: <repoDir>/architecture.html (or --out, relative to cwd). Intermediate files live in <repoDir>/.loupe/:
+// Output: <repoDir>/loupe.html (or --out, relative to cwd). Intermediate files live in <repoDir>/.loupe/:
 // tree.json + tree.files.json, and the answer cache in .loupe/cache/ (LOUPE_CACHE overrides). .loupe/ ignores itself.
 import { existsSync, statSync, readFileSync, openSync, fstatSync, closeSync, constants as fsc } from 'node:fs';
 import { join, resolve, relative, dirname, isAbsolute } from 'node:path';
@@ -37,7 +37,7 @@ if (opts.model) process.env.LOUPE_MODEL = opts.model;
 if (process.env.LOUPE_MODEL) try { validateModel(process.env.LOUPE_MODEL); } catch (e) { fail(e.message.replace(/^loupe: /, ''), 2); }
 if (process.env.LOUPE_EFFORT) try { validateEffort(process.env.LOUPE_EFFORT); } catch (e) { fail(e.message.replace(/^loupe: /, ''), 2); }
 const REPO = resolve(opts.repo || '.');
-const OUT = resolve(opts.out || join(REPO, 'architecture.html'));
+const OUT = resolve(opts.out || join(REPO, 'loupe.html'));
 const WORK = join(REPO, '.loupe');
 const TREE = join(WORK, 'tree.json');
 const show = (p) => { const r = relative(process.cwd(), p); return r && !r.startsWith('..') && !isAbsolute(r) ? r : p; };
@@ -49,7 +49,7 @@ catch (e) { fail(e.code === 'ENOENT' ? 'git is not installed: Loupe lists your s
 try { git(REPO, ['rev-parse', '--verify', 'HEAD'], { stdio: 'pipe' }); }
 catch { fail(`${REPO} has no commits yet: commit your files first (Loupe records the commit it mapped).`, 2); }
 
-// The repo is untrusted: it may commit `.loupe`, `.loupe/cache`, `.loupe/tree.json`, `architecture.html` or a parent
+// The repo is untrusted: it may commit `.loupe`, `.loupe/cache`, `.loupe/tree.json`, `loupe.html` or a parent
 // dir of `--out` as symlinks to make us write elsewhere, or track `.loupe/` to pre-seed cached answers.
 const inRepo = (p) => within(REPO, p);
 const truthy = (v) => !!v && !/^(0|false|no)$/i.test(v);

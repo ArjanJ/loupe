@@ -93,8 +93,8 @@ function fixture(name) {
 function st0() { return join(TMP, 'none'); }
 function checkMap(dir, r, what) {
   check(r.code === 0, `${what}: exits 0`, r.all);
-  const html = join(dir, 'architecture.html');
-  check(existsSync(html), `${what}: wrote architecture.html`);
+  const html = join(dir, 'loupe.html');
+  check(existsSync(html), `${what}: wrote loupe.html`);
   const text = existsSync(html) ? readFileSync(html, 'utf8') : '';
   check(text.includes('"id":"system"') && text.includes('Stub System') && !text.includes('/*__ZOOM_TREE__*/null'), `${what}: html has the inlined tree`);
   check(existsSync(join(dir, '.loupe', 'tree.json')) && existsSync(join(dir, '.loupe', 'tree.files.json')), `${what}: .loupe/tree.json + sidecar`);
@@ -146,7 +146,7 @@ try {
   seen.auth = [];
   const outFile = join(TMP, 'out', 'map.html');
   r = await run(['map', an, '--out', outFile], childEnv({ ANTHROPIC_API_KEY: KEY, ANTHROPIC_BASE_URL: BASE }));
-  check(r.code === 0 && existsSync(outFile) && !existsSync(join(an, 'architecture.html')) && existsSync(join(an, '.loupe', 'tree.json')), 'anthropic: --out honoured, .loupe/ in repo', r.all);
+  check(r.code === 0 && existsSync(outFile) && !existsSync(join(an, 'loupe.html')) && existsSync(join(an, '.loupe', 'tree.json')), 'anthropic: --out honoured, .loupe/ in repo', r.all);
   check(r.out.includes('backend: anthropic'), 'anthropic: auto-selected', r.out);
   check(seen.auth.length > 0 && seen.auth.every((a) => a === `x-api-key:${KEY}`), 'anthropic: stub saw x-api-key', seen.auth.join(' '));
   check(!r.all.includes(KEY), 'anthropic: key never printed');
@@ -289,14 +289,14 @@ try {
   r = await run(['map', pk, '--no-open'], { ...ttyEnv, PATH: noClaudeDir, OPENAI_API_KEY: '' }, { keys: '\x1b[B\r', timeout: 30_000 });
   check(r.code === 0 && r.out.includes('✓ Model  Anthropic API · claude-haiku-5-5') && r.out.includes('model claude-haiku-5-5'), 'picker: API-only options start at the backend default', r.all);
 
-  // a hostile repo: committed symlinks for .loupe/, .loupe/cache, .loupe/tree.json or architecture.html are refused
+  // a hostile repo: committed symlinks for .loupe/, .loupe/cache, .loupe/tree.json or loupe.html are refused
   const victim = join(TMP, 'victim'); mkdirSync(victim); writeFileSync(join(victim, 'precious'), 'keep');
   const symEnv = childEnv({ OPENAI_API_KEY: KEY, OPENAI_BASE_URL: `${BASE}/v1` });
   for (const [name, setup] of [
     ['.loupe -> elsewhere', (d) => symlinkSync(victim, join(d, '.loupe'))],
     ['.loupe/cache -> elsewhere', (d) => { mkdirSync(join(d, '.loupe')); symlinkSync(victim, join(d, '.loupe', 'cache')); }],
     ['.loupe/tree.json -> file', (d) => { mkdirSync(join(d, '.loupe')); symlinkSync(join(victim, 'precious'), join(d, '.loupe', 'tree.json')); }],
-    ['architecture.html -> file', (d) => symlinkSync(join(victim, 'precious'), join(d, 'architecture.html'))],
+    ['loupe.html -> file', (d) => symlinkSync(join(victim, 'precious'), join(d, 'loupe.html'))],
   ]) {
     const d = fixture('sym-' + name.replace(/\W+/g, '_')); setup(d);
     r = await run(['map', d, '--no-open'], symEnv);
@@ -413,9 +413,9 @@ try {
     execFileSync(gitBin, ['add', '-A'], { cwd: f1, stdio: 'pipe' });
     execFileSync(gitBin, ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'secrets'], { cwd: f1, stdio: 'pipe' });
     r = await run(['map', f1, '--no-open', '--backend', 'openai'], stEnv);
-    const htmlF1 = readFileSync(join(f1, 'architecture.html'), 'utf8');
+    const htmlF1 = readFileSync(join(f1, 'loupe.html'), 'utf8');
     const treeF1 = readFileSync(join(f1, '.loupe', 'tree.json'), 'utf8');
-    check(r.code === 0 && !htmlF1.includes('SLACKWEBHOOKSECRET') && !htmlF1.includes('STRIPESECRET') && !treeF1.includes('SLACKWEBHOOKSECRET') && !treeF1.includes('STRIPESECRET'), 'evidence redaction e2e: secrets redacted from evidence in tree.json and architecture.html', treeF1.slice(0, 1500));
+    check(r.code === 0 && !htmlF1.includes('SLACKWEBHOOKSECRET') && !htmlF1.includes('STRIPESECRET') && !treeF1.includes('SLACKWEBHOOKSECRET') && !treeF1.includes('STRIPESECRET'), 'evidence redaction e2e: secrets redacted from evidence in tree.json and loupe.html', treeF1.slice(0, 1500));
   }
 
   // ---------- tracked .loupe/ cache is warned and ignored ----------

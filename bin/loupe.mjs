@@ -20,7 +20,7 @@ Usage:
 ${Object.values(COMMANDS).map(([, u]) => `  ${u}`).join('\n')}
 
 Options for map:
-  --out <file>        where to write the map (default: <repoDir>/architecture.html)
+  --out <file>        where to write the map (default: <repoDir>/loupe.html)
   --no-open           don't open the map in your browser (also off when CI or LOUPE_NO_OPEN is set, or stdout isn't a terminal)
   --backend <name>    claude | anthropic | openai (default: claude if on PATH, else ANTHROPIC_API_KEY, else OPENAI_API_KEY)
   --model <name>      model for that backend: a claude alias (sonnet, opus, haiku) or an API model id (also LOUPE_MODEL)
