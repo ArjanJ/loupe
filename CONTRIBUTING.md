@@ -41,13 +41,19 @@ GitHub Actions CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs 
 
 ## Releasing
 
-Releases are published to npm by [`.github/workflows/publish.yml`](.github/workflows/publish.yml) using npm trusted publishing (OIDC). There is no npm token in the repo.
+Versioning and publishing are automated with [Changesets](https://changesets.dev) in [`.github/workflows/publish.yml`](.github/workflows/publish.yml). Publishing uses npm trusted publishing (OIDC). There is no npm token in the repo. Don't edit `version` in `package.json` by hand.
 
-1. In a PR, bump `version` in `package.json` and `package-lock.json` (`npm version X.Y.Z --no-git-tag-version` updates both). Get it reviewed and merge to `main`.
-2. Create a GitHub Release from `main` with tag `vX.Y.Z` matching that version. The workflow strips the leading `v` and fails if the rest doesn't equal `package.json`'s version.
-3. Publishing the release triggers the workflow, which runs `npm ci`, the full test suite on Node 24, and `npm publish --access public`. Provenance is attached automatically.
+1. **In a PR that should ship**, run `npx changeset`, pick `patch`, `minor` or `major`, and write a one-line summary for users. Commit the generated `.changeset/*.md` file with the PR. PRs that shouldn't release (tests, CI, docs) don't need one.
+2. **After it merges**, the workflow opens or updates a PR titled **Version Packages**. That PR bumps `package.json` and `package-lock.json`, adds the summaries to `CHANGELOG.md`, and deletes the changeset files. Further merges with changesets keep updating the same PR.
+3. **To release, review and merge Version Packages.** The workflow then runs the full test suite on Node 24, publishes to npm with provenance, pushes the `vX.Y.Z` tag, and creates the GitHub Release. You don't create releases or tags yourself.
 
-To validate without publishing, run the **Publish** workflow manually (Actions → Publish → Run workflow). `dry_run` is on by default and runs the tests plus `npm publish --dry-run`. Unchecking `dry_run` publishes for real, and only from `main`. Prefer creating a GitHub Release as the usual publish path.
+CI doesn't run on the Version Packages PR automatically, because GitHub doesn't start workflows for PRs that Actions opens. Its changes are only version, lockfile and changelog edits, and the publish job runs the full test suite again before anything is published.
+
+To validate the package without publishing, run the **Publish** workflow manually (Actions → Publish → Run workflow). It runs the tests and `npm publish --dry-run`, and never publishes.
+
+### One-time GitHub setup
+
+In the repo's **Settings → Actions → General → Workflow permissions**, enable **Allow GitHub Actions to create and approve pull requests**. Without it, the workflow can't open the Version Packages PR.
 
 ### One-time npm setup
 
