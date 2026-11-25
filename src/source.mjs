@@ -44,17 +44,20 @@ export function isMinified(text) {
   return total / lines.length > 500;
 }
 
+// Tracked files that a .gitignore rule matches (`git ls-files -z -ci --exclude-standard`).
+// Throws when git fails: callers use the result as an exclusion rule, so "could not tell" must not mean "nothing is ignored".
+export function gitIgnoredTracked(repo, gitFn) {
+  const ignored = new Set();
+  const out = gitFn(repo, ['ls-files', '-z', '-ci', '--exclude-standard'], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
+  for (const p of out.split('\0')) if (p) ignored.add(p);
+  return ignored;
+}
+
 // Batched git-based filters for vendored/generated/ignored files:
-//   - tracked files matching .gitignore (`git ls-files -z -ci --exclude-standard`)
+//   - tracked files matching .gitignore (`ignored`, from gitIgnoredTracked)
 //   - .gitattributes (`linguist-vendored`, `linguist-generated`, `-diff`, `binary`) in one batched `check-attr` call
 //   - default vendored/build/generated path patterns (overridden by linguist-vendored=false / linguist-generated=false)
-export function gitSourceFilters(repo, candidatePaths, gitFn, allGitPaths = candidatePaths, pkgDirs = []) {
-  const ignored = new Set();
-  try {
-    const out = gitFn(repo, ['ls-files', '-z', '-ci', '--exclude-standard'], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
-    for (const p of out.split('\0')) if (p) ignored.add(p);
-  } catch {}
-
+export function gitSourceFilters(repo, candidatePaths, gitFn, allGitPaths = candidatePaths, pkgDirs = [], ignored = gitIgnoredTracked(repo, gitFn)) {
   const attrs = new Map(); // path -> { excluded, included }
   if (candidatePaths.length) {
     try {

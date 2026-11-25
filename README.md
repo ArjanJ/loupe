@@ -49,7 +49,8 @@ Useful environment variables:
 | `LOUPE_IGNORE` | none | regex of paths to skip, e.g. `^(examples\|docs)/` |
 | `LOUPE_CONCURRENCY` | `6` | parallel model calls |
 | `LOUPE_EFFORT` | backend default | `low`, `medium`, `high`, `xhigh`, or `max` |
-| `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` | official APIs | point at a proxy or compatible server |
+| `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` | official APIs | point at a proxy or compatible server (https, or http on localhost) |
+| `LOUPE_ALLOW_HTTP` | off | `1` allows a plain `http://` base URL on a network you trust |
 | `LOUPE_CLAUDE_BIN` | `claude` | path to the Claude Code CLI |
 
 ## Multi-repo systems

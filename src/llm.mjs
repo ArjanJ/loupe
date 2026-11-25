@@ -103,6 +103,24 @@ export function validateEffort(e) {
   return s;
 }
 
+// ANTHROPIC_BASE_URL / OPENAI_BASE_URL receive the API key and the source code: https only, except a server on this
+// machine (a local proxy or compatible model server), or any http host once LOUPE_ALLOW_HTTP=1 says the network is
+// trusted (a model server on your LAN or Docker host). Returns the URL without trailing slashes or throws BackendError.
+const LOOPBACK = /^(localhost|127(?:\.\d{1,3}){3}|\[::1\])$/i;
+export function checkBaseUrl(envName, value) {
+  const raw = String(value).replace(/\/+$/, '');
+  let u; try { u = new URL(raw); } catch { throw new BackendError(`loupe: ${envName} is not a valid URL`); }
+  if (u.username || u.password) throw new BackendError(`loupe: ${envName} must not contain credentials; use the API key variable instead`);
+  const allowHttp = /^(1|true|yes)$/i.test(String(process.env.LOUPE_ALLOW_HTTP || '').trim());
+  if (u.protocol === 'https:' || (u.protocol === 'http:' && (allowHttp || LOOPBACK.test(u.hostname)))) return raw;
+  if (u.protocol !== 'http:') throw new BackendError(`loupe: ${envName} must be an https:// URL`);
+  throw new BackendError(`loupe: ${envName} uses plain http://, which would send your API key and code unencrypted. Use https://, or set LOUPE_ALLOW_HTTP=1 if this server is on a network you trust (http://localhost is always allowed).`);
+}
+const BASE_URL = {
+  anthropic: () => checkBaseUrl('ANTHROPIC_BASE_URL', process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com'),
+  openai: () => checkBaseUrl('OPENAI_BASE_URL', process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1'),
+};
+
 // -> { name, label, model, bin? } or throws BackendError with a message fit to show as-is.
 export function resolveBackend(forced = process.env.LOUPE_BACKEND || '') {
   forced = String(forced).trim().toLowerCase();
@@ -110,7 +128,7 @@ export function resolveBackend(forced = process.env.LOUPE_BACKEND || '') {
   validateEffort(process.env.LOUPE_EFFORT);
   if (forced && !Object.hasOwn(BACKENDS, forced)) throw new BackendError(`unknown backend "${forced}": use claude, anthropic or openai`);
   const claudeBin = process.env.LOUPE_CLAUDE_BIN || 'claude';
-  const make = (name, extra = {}) => ({ name, label: BACKENDS[name], model: modelFor(name), ...extra });
+  const make = (name, extra = {}) => { if (BASE_URL[name]) BASE_URL[name](); return { name, label: BACKENDS[name], model: modelFor(name), ...extra }; };
   if (forced === 'claude') { const bin = findOnPath(claudeBin); if (!bin) throw new BackendError(`--backend claude: \`${claudeBin}\` was not found on PATH. Install Claude Code and sign in (https://docs.anthropic.com/en/docs/claude-code), or set LOUPE_CLAUDE_BIN.`); return make('claude', { bin }); }
   if (forced === 'anthropic') { if (!process.env.ANTHROPIC_API_KEY) throw new BackendError('--backend anthropic: ANTHROPIC_API_KEY is not set.'); return make('anthropic'); }
   if (forced === 'openai') { if (!process.env.OPENAI_API_KEY) throw new BackendError('--backend openai: OPENAI_API_KEY is not set.'); return make('openai'); }
@@ -211,7 +229,7 @@ async function post(url, headers, body, key) {
 }
 async function runAnthropic(b, prompt) {
   const key = process.env.ANTHROPIC_API_KEY;
-  const base = (process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com').replace(/\/+$/, '');
+  const base = BASE_URL.anthropic();
   const effort = validateEffort(process.env.LOUPE_EFFORT);
   const j = await post(`${base}/v1/messages`, { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
     { model: b.model, max_tokens: 16000, ...(effort ? { output_config: { effort } } : {}), messages: [{ role: 'user', content: prompt }] }, key);
@@ -220,7 +238,7 @@ async function runAnthropic(b, prompt) {
 }
 async function runOpenAI(b, prompt) {
   const key = process.env.OPENAI_API_KEY;
-  const base = (process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/+$/, '');
+  const base = BASE_URL.openai();
   const j = await post(`${base}/chat/completions`, { authorization: `Bearer ${key}` }, { model: b.model, messages: [{ role: 'user', content: prompt }] }, key);
   return String(j.choices?.[0]?.message?.content ?? '');
 }

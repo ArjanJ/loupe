@@ -7,11 +7,11 @@
 //         4) LLM writes the system-level summary; assemble tree with sibling edges at every level
 // LLM answers are cached next to the output in .loupe-cache/ (LOUPE_CACHE), keyed by prompt hash, so reruns are cheap.
 // The LLM is your local Claude Code CLI, the Anthropic API or the OpenAI API: see src/llm.mjs (LOUPE_BACKEND).
-import { readFileSync, existsSync, readdirSync, statSync, realpathSync } from 'node:fs';
+import { readdirSync } from 'node:fs';
 import { join, dirname, basename, resolve, posix } from 'node:path';
-import { createLlm, BackendError, git, hasTrackedFiles } from './llm.mjs';
-import { SafeFsError, within, lst, checkSafePath, safeDir, safeWriteFile } from './fs-safe.mjs';
-import { SRC_EXT, JS_TS_EXT, SECRET_FILE, EXCLUDE, isMinified, gitSourceFilters, extractExports } from './source.mjs';
+import { createLlm, BackendError, git, hasTrackedFiles, redactSecrets } from './llm.mjs';
+import { SafeFsError, within, lst, checkSafePath, safeDir, safeWriteFile, repoReader } from './fs-safe.mjs';
+import { SRC_EXT, JS_TS_EXT, SECRET_FILE, EXCLUDE, isMinified, gitSourceFilters, gitIgnoredTracked, extractExports } from './source.mjs';
 
 if (!process.argv[2]) { console.error('usage: loupe scan <repoDir> [out.json]'); process.exit(2); }
 const REPO = resolve(process.argv[2]);
@@ -20,16 +20,10 @@ const FILES_OUT = OUT.replace(/\.json$/, '') + '.files.json';
 const CACHE = resolve(process.env.LOUPE_CACHE || join(dirname(OUT), '.loupe-cache'));
 const KEY_FILES_PER_MODULE = Math.max(1, Number(process.env.LOUPE_KEY_FILES) || 12);
 // LOUPE_IGNORE: a regex of workspace dirs or files to leave out (e.g. "^examples/")
-const IGNORE = process.env.LOUPE_IGNORE ? new RegExp(process.env.LOUPE_IGNORE) : null;
+let IGNORE = null;
+try { IGNORE = process.env.LOUPE_IGNORE ? new RegExp(process.env.LOUPE_IGNORE) : null; } catch (e) { console.error(`loupe: invalid LOUPE_IGNORE: ${e.message}`); process.exit(2); }
 
 const log = (...a) => console.error('[gen]', ...a);
-// Untrusted repo: only read regular files that resolve (after symlinks) inside REPO, up to MAX_BYTES.
-const REAL_REPO = realpathSync(REPO);
-const MAX_BYTES = 1024 * 1024;
-const insideRepo = (p) => { if (!within(REPO, resolve(REPO, p))) return false; try { return within(REAL_REPO, realpathSync(join(REPO, p))); } catch { return true; /* does not exist yet: nothing to read */ } };
-const isRegularFile = (p) => { try { if (!insideRepo(p)) return false; const s = statSync(join(REPO, p)); return s.isFile() && s.size <= MAX_BYTES; } catch { return false; } };
-const readRepo = (p) => (isRegularFile(p) ? readFileSync(join(REPO, p), 'utf8') : '');
-const readJson = (p) => { const t = readRepo(p); if (!t) return null; try { return JSON.parse(t); } catch { log(`skipping ${p}: invalid JSON`); return null; } };
 
 // Refuse symlink/non-regular output targets or an existing symlinked cache dir before any work.
 try {
@@ -41,12 +35,28 @@ try {
 // ---------- 1. structure ----------
 const gitFiles = git(REPO, ['ls-files', '-z'], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 }).split('\0').filter(Boolean);
 const commit = git(REPO, ['rev-parse', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
+// Untrusted repo: every file Loupe reads is tracked by git, not secret-looking, a regular file of at most 1 MiB, with
+// no symlink on the way (a tracked `src/config.ts -> ../.env.local` must not send the ignored secret as source). On top:
+//   source   not LOUPE_IGNOREd; tracked files matching .gitignore are left to gitSourceFilters, where .gitattributes can re-include them
+//   docs     (README, CONTEXT, ...) not LOUPE_IGNOREd and not matching .gitignore
+//   config   (package.json, pnpm-workspace.yaml) not matching .gitignore; LOUPE_IGNORE picks what to map, not how the repo is laid out
+const tracked = new Set(gitFiles);
+let ignoredTracked;
+try { ignoredTracked = gitIgnoredTracked(REPO, git); }
+catch (e) { console.error(`loupe: could not ask git which tracked files match .gitignore (${String(e.message).split('\n')[0]}); stopping rather than risk reading ignored files.`); process.exit(2); }
+const baseRule = (p) => tracked.has(p) && !SECRET_FILE.test(p);
+const notIgnored = (p) => !(IGNORE && IGNORE.test(p));
+const source = repoReader(REPO, { allow: (p) => baseRule(p) && notIgnored(p) });
+const docs = repoReader(REPO, { allow: (p) => baseRule(p) && notIgnored(p) && !ignoredTracked.has(p) });
+const config = repoReader(REPO, { allow: (p) => baseRule(p) && !ignoredTracked.has(p) });
+const isDir = config.isDir;
+const readJson = (p) => { const t = config.read(p); if (!t) return null; try { return JSON.parse(t); } catch { log(`skipping ${p}: invalid JSON`); return null; } };
 const rootPkg = readJson('package.json') || {};
 // "@acme/shop-monorepo" -> "shop": scope and workspace-ish suffixes say nothing on a map
 const ROOT_NAME = (typeof rootPkg.name === 'string' && rootPkg.name ? rootPkg.name : basename(REPO)).replace(/^@[^/]+\//, '').replace(/[-_ ](monorepo|workspace|workspaces|root)$/i, '') || basename(REPO);
 
 function workspaceGlobs() {
-  const pnpm = readRepo('pnpm-workspace.yaml');
+  const pnpm = config.read('pnpm-workspace.yaml');
   if (pnpm) {
     const globs = [];
     let inPk = false;
@@ -61,9 +71,9 @@ function workspaceGlobs() {
 const packages = [];
 for (const g of workspaceGlobs()) {
   const base = g.slice(0, -2);
-  const dirs = g.endsWith('/*') ? (insideRepo(base) && existsSync(join(REPO, base)) && statSync(join(REPO, base)).isDirectory() ? readdirSync(join(REPO, base)).map((d) => posix.join(base, d)) : []) : [posix.normalize(g)];
+  const dirs = g.endsWith('/*') ? (isDir(base) ? readdirSync(join(REPO, base)).map((d) => posix.join(base, d)) : []) : [posix.normalize(g)];
   for (const d of dirs) {
-    if (!insideRepo(d) || packages.some((p) => p.dir === d) || (IGNORE && IGNORE.test(d + '/'))) continue;
+    if (!isDir(d) || packages.some((p) => p.dir === d) || (IGNORE && IGNORE.test(d + '/'))) continue;
     const pj = readJson(posix.join(d, 'package.json'));
     if (pj) packages.push({ dir: d, name: typeof pj.name === 'string' && pj.name ? pj.name : d });
   }
@@ -78,13 +88,13 @@ for (const pkg of packages) {
   for (const f of gitFiles) if (!pkgOwner.has(f) && inPkg(f)) pkgOwner.set(f, pkg);
   pkg.files = [];
 }
-const candidates = [...pkgOwner.keys()].filter((f) => SRC_EXT.test(f) && !EXCLUDE.test(f) && !SECRET_FILE.test(f) && !(IGNORE && IGNORE.test(f)) && isRegularFile(f));
-const filters = gitSourceFilters(REPO, candidates, git, gitFiles, packages.map((p) => p.dir));
+const candidates = [...pkgOwner.keys()].filter((f) => SRC_EXT.test(f) && !EXCLUDE.test(f) && source.isRegularFile(f));
+const filters = gitSourceFilters(REPO, candidates, git, gitFiles, packages.map((p) => p.dir), ignoredTracked);
 let skippedVendored = 0;
 const files = new Map(); // path -> info
 for (const f of candidates) {
   if (filters.isSkippedPath(f)) { skippedVendored++; continue; }
-  const text = readRepo(f);
+  const text = source.read(f);
   if (!filters.isIncludedByAttr(f) && isMinified(text)) { skippedVendored++; continue; }
   const pkg = pkgOwner.get(f);
   pkg.files.push(f);
@@ -145,7 +155,10 @@ if (!process.env.LOUPE_UNTRUSTED_CACHE && untrustedCache) {
 }
 const llm = createLlm({ cache: CACHE, log, onFail: 'throw', trustCache: !untrustedCache });
 const repoKind = activePackages.length > 1 ? 'monorepo' : 'repository';
-const readSnippet = (p, n) => readRepo(p).slice(0, n);
+// best-effort: token-shaped secrets in tracked docs and source never reach the model. Redact a little past the cut
+// first, so a token that straddles it is caught whole instead of leaving its first characters behind.
+const clip = (text, n) => redactSecrets(text.slice(0, n + 4096)).slice(0, n);
+const readSnippet = (p, n) => clip(docs.read(p), n);
 const fileLine = (f) => { const i = files.get(f); return `${f} (${i.loc} loc${i.exports.length ? '; exports: ' + i.exports.slice(0, 8).join(', ') : ''})`; };
 const STYLE = `Descriptions are for an architecture map that gets more detailed as the reader zooms in. shortDescription: one plain sentence, max ~15 words, says what it does. longDescription: 2-4 sentences, max ~70 words, concrete: responsibilities, key collaborators, notable design choices. No marketing words, no "This module". Answer with ONLY a JSON object, no prose, no code fences.`;
 
@@ -171,7 +184,7 @@ Schema: {"package":{"label":"short human label","shortDescription":"...","longDe
 // ---------- 3. key files per module ----------
 function keyFileScore(f) { const i = files.get(f); return Math.sqrt(i.loc) + 3 * (inbound.get(f) || 0) + i.exports.length * 0.5; }
 async function describeFiles(pkg, mod, keyFiles) {
-  const blocks = keyFiles.map((f) => { const i = files.get(f); return `### ${f} (${i.loc} loc)\nexports: ${i.exports.slice(0, 15).join(', ') || '(none)'}\n${i.text.slice(0, 1800)}`; }).join('\n\n');
+  const blocks = keyFiles.map((f) => { const i = files.get(f); return `### ${f} (${i.loc} loc)\nexports: ${i.exports.slice(0, 15).join(', ') || '(none)'}\n${clip(i.text, 1800)}`; }).join('\n\n');
   const prompt = `You are mapping the architecture of the "${ROOT_NAME}" ${repoKind}. Package "${pkg.name}", module "${mod.label}" (${mod.shortDescription}).
 Key files with the start of their source:
 ${blocks}

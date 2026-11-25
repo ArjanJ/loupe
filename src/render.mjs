@@ -52,9 +52,13 @@ for (const m of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) {
   const body = m[1].replace(/\r\n?/g, '\n');
   scriptHashes.push(`'sha256-${createHash('sha256').update(body, 'utf8').digest('base64')}'`);
 }
-if (scriptHashes.length === 2 && html.includes(CSP_SCRIPT_PLACEHOLDER)) {
-  html = html.replace(CSP_SCRIPT_PLACEHOLDER, () => `script-src ${scriptHashes.join(' ')}`);
+// Never ship the page with script-src 'unsafe-inline': if the template changed shape, stop instead.
+// (Checked on the template: tree text may contain the directive too; the first match is always the <meta> tag.)
+if (scriptHashes.length !== 2 || template.split(CSP_SCRIPT_PLACEHOLDER).length !== 2) {
+  console.error(`template must contain exactly two inline <script> blocks and one "${CSP_SCRIPT_PLACEHOLDER}" CSP directive (found ${scriptHashes.length} scripts)`);
+  process.exit(1);
 }
+html = html.replace(CSP_SCRIPT_PLACEHOLDER, () => `script-src ${scriptHashes.join(' ')}`);
 
 try { safeWriteFile(resolve(outPath), html); }
 catch (e) { if (e instanceof SafeFsError) { console.error(`loupe: ${e.message}`); process.exit(2); } throw e; }
