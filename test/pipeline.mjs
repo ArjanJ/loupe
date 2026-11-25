@@ -519,6 +519,17 @@ try {
     check(r.code === 2 && /not inside a git repository/.test(r.err) && !/at .*node:/.test(r.err), 'review: relations outside a git repo is a friendly error, not a stack trace', r.all);
   }
 
+  // ---------- prompt redaction keeps ordinary URLs readable, still blanks secret-named parameters ----------
+  {
+    const pr = (x) => redactSecrets(x, { urls: 'secrets' });
+    const plain = 'fetch("https://api.github.com/repos/o/r/git/trees/main?recursive=1&per_page=100#readme")';
+    check(pr(plain) === plain, 'prompt redaction: an ordinary query string and fragment are left alone', pr(plain));
+    check(pr('https://x.example/cb?state=ok&access_token=abc123DEF456&next=/home') === 'https://x.example/cb?state=ok&access_token=***&next=/home', 'prompt redaction: a secret-named parameter value is blanked', pr('https://x.example/cb?state=ok&access_token=abc123DEF456&next=/home'));
+    check(pr('`https://x.example/cb?token=${token}`') === '`https://x.example/cb?token=${token}`', 'prompt redaction: a template placeholder is not a secret');
+    check(pr('https://user:hunter2@db.example/x') === 'https://***@db.example/x' && pr('k = "sk-ant-abcdefghijklmnop"') === 'k = "***"', 'prompt redaction: URL credentials and token shapes still blanked');
+    check(redactSecrets(plain).includes('?***'), 'prompt redaction: the default (errors, evidence) still blanks whole query strings');
+  }
+
   // ---------- API base URLs must be https (or loopback http) ----------
   {
     const f13 = fixture('f13-base-url');

@@ -186,11 +186,17 @@ function runClaude(b, prompt) {
 }
 // Best-effort secret redaction for error messages and stored evidence snippets:
 // URL userinfo (up to the last @ before the host) and query strings, Slack webhook paths, and common token shapes.
-export function redactSecrets(s) {
-  return String(s)
-    .replace(/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/"'`<>]+@/gi, '$1***@')
-    .replace(/(\b[a-z][a-z0-9+.-]*:\/\/[^\s"'`<>?#]+)\?[^\s"'`<>#)]+/gi, '$1?***')
-    .replace(/(\b[a-z][a-z0-9+.-]*:\/\/[^\s"'`<>?#]+)#[^\s"'`<>)]+/gi, '$1#***')
+// `urls: 'all'` (default; errors and stored evidence) blanks every URL query string and fragment. `urls: 'secrets'`
+// (source and docs on their way into a prompt) keeps them readable and blanks only the values of secret-named
+// parameters (?token=, &api_key=, &signature=, ...), so ordinary links in code still tell the model something.
+const SECRET_PARAM = /([?&#;](?:[a-z0-9_.-]*(?:token|secret|passw(?:or)?d|pwd|signature|credential|api[-_]?key|access[-_]?key|auth|session)[a-z0-9_.-]*|key|sig|code)=)(?!\$\{)[^\s"'`<>&#;)]+/gi;
+export function redactSecrets(s, { urls = 'all' } = {}) {
+  let t = String(s).replace(/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/"'`<>]+@/gi, '$1***@');
+  t = urls === 'secrets'
+    ? t.replace(SECRET_PARAM, '$1***')
+    : t.replace(/(\b[a-z][a-z0-9+.-]*:\/\/[^\s"'`<>?#]+)\?[^\s"'`<>#)]+/gi, '$1?***')
+      .replace(/(\b[a-z][a-z0-9+.-]*:\/\/[^\s"'`<>?#]+)#[^\s"'`<>)]+/gi, '$1#***');
+  return t
     .replace(/(hooks\.slack\.com\/(?:services|workflows|triggers)\/)[^\s"'`<>?#)]+/gi, '$1***')
     .replace(/\b(Bearer\s+)(?!\$\{)[A-Za-z0-9._~+/=-]{8,}/gi, '$1***')
     .replace(/\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{6,}\b/g, '***')

@@ -160,7 +160,7 @@ const llm = createLlm({ cache: CACHE, log, onFail: 'throw', trustCache: !untrust
 const repoKind = activePackages.length > 1 ? 'monorepo' : 'repository';
 // best-effort: token-shaped secrets in tracked docs and source never reach the model. Redact a little past the cut
 // first, so a token that straddles it is caught whole instead of leaving its first characters behind.
-const clip = (text, n) => redactSecrets(text.slice(0, n + 4096)).slice(0, n);
+const clip = (text, n) => redactSecrets(text.slice(0, n + 4096), { urls: 'secrets' }).slice(0, n);
 const readSnippet = (p, n) => clip(docs.read(p), n);
 const fileLine = (f) => { const i = files.get(f); return `${f} (${i.loc} loc${i.exports.length ? '; exports: ' + i.exports.slice(0, 8).join(', ') : ''})`; };
 const STYLE = `Descriptions are for an architecture map that gets more detailed as the reader zooms in. shortDescription: one plain sentence, max ~15 words, says what it does. longDescription: 2-4 sentences, max ~70 words, concrete: responsibilities, key collaborators, notable design choices. No marketing words, no "This module". Answer with ONLY a JSON object, no prose, no code fences.`;
