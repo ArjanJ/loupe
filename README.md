@@ -13,7 +13,7 @@ cd your-app
 npx @arjanj/loupe
 ```
 
-Loupe scans the repo, groups files into modules, describes them, maps how they connect, and writes `architecture.html`, which it then opens in your browser.
+Loupe scans the repo, groups files into modules, describes them, maps how they connect, and writes `loupe.html`, which it then opens in your browser.
 
 ## Requirements
 
@@ -33,7 +33,7 @@ Loupe sends source excerpts and file paths to the backend you pick. Answers are 
 
 ```sh
 npx @arjanj/loupe [repoDir] [options]
-  --out <file>        output path (default: <repoDir>/architecture.html)
+  --out <file>        output path (default: <repoDir>/loupe.html)
   --no-open           don't open the browser
   --backend <name>    claude | anthropic | openai
   --model <name>      model alias (sonnet, opus, haiku) or API model id
