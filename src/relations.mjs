@@ -12,18 +12,19 @@
 // then asks the LLM (cached) to label the rolled-up relationships and derive a few end-to-end flows.
 // Writes the tree back in place (idempotent): root.children += "External services", root.relations, root.rollups, root.flows.
 // LOUPE_NOLLM=1 skips uncached LLM calls (static analysis only).
-import { readFileSync, existsSync, statSync, realpathSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname, resolve, posix } from 'node:path';
 import { createLlm, git, hasTrackedFiles, redactSecrets } from './llm.mjs';
-import { SafeFsError, within, checkSafePath, safeDir, safeWriteFile } from './fs-safe.mjs';
-import { SRC_EXT, SECRET_FILE, isMinified, gitSourceFilters } from './source.mjs';
+import { SafeFsError, within, checkSafePath, safeDir, safeWriteFile, repoReader } from './fs-safe.mjs';
+import { SRC_EXT, SECRET_FILE, isMinified, gitSourceFilters, gitIgnoredTracked } from './source.mjs';
 
 if (!process.argv[2] || !process.argv[3]) { console.error('usage: loupe relations <repoDir> <tree.json>'); process.exit(2); }
 const REPO = resolve(process.argv[2]);
 const TREE = resolve(process.argv[3]);
 const CACHE = resolve(process.env.LOUPE_CACHE || join(dirname(TREE), '.loupe-cache'));
 const NOLLM = !!process.env.LOUPE_NOLLM;
-const IGNORE = process.env.LOUPE_IGNORE ? new RegExp(process.env.LOUPE_IGNORE) : null;
+let IGNORE = null;
+try { IGNORE = process.env.LOUPE_IGNORE ? new RegExp(process.env.LOUPE_IGNORE) : null; } catch (e) { console.error(`loupe: invalid LOUPE_IGNORE: ${e.message}`); process.exit(2); }
 const log = (...a) => console.error('[rel]', ...a);
 
 try {
@@ -31,13 +32,23 @@ try {
   safeDir(CACHE, { withinDir: within(REPO, CACHE) ? REPO : null });
 } catch (e) { if (e instanceof SafeFsError) { console.error(`loupe: ${e.message}`); process.exit(2); } throw e; }
 
-// Untrusted repo: only read regular files that resolve (after symlinks) inside REPO, up to MAX_BYTES.
-const REAL_REPO = realpathSync(REPO);
-const MAX_BYTES = 1024 * 1024;
-const insideRepo = (p) => { if (!within(REPO, resolve(REPO, p))) return false; try { return within(REAL_REPO, realpathSync(join(REPO, p))); } catch { return true; /* does not exist yet: nothing to read */ } };
-const isRegularFile = (p) => { try { if (!insideRepo(p)) return false; const s = statSync(join(REPO, p)); return s.isFile() && s.size <= MAX_BYTES; } catch { return false; } };
-const readRepo = (p) => (isRegularFile(p) ? readFileSync(join(REPO, p), 'utf8') : '');
-
+// Untrusted repo: the same rules as `loupe scan` for every file read: tracked by git, not secret-looking, a regular
+// file of at most 1 MiB, and no symlink on the way. Source files are also not LOUPE_IGNOREd (tracked files matching
+// .gitignore are left to gitSourceFilters, where .gitattributes can re-include them); config files (package.json,
+// tsconfig, go.mod, Cargo.toml, ...) must not match .gitignore. The sidecar file map is only a list of candidates.
+let tracked, ignoredTracked;
+try {
+  tracked = new Set(git(REPO, ['ls-files', '-z'], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] }).split('\0').filter(Boolean));
+  ignoredTracked = gitIgnoredTracked(REPO, git);
+} catch (e) {
+  console.error(e.code === 'ENOENT' ? 'loupe: git is not installed: Loupe only reads the files git tracks.' : `loupe: ${REPO} is not inside a git repository (or git failed there): Loupe only reads the files git tracks.`);
+  process.exit(2);
+}
+const baseRule = (p) => tracked.has(p) && !SECRET_FILE.test(p);
+const source = repoReader(REPO, { allow: (p) => baseRule(p) && !(IGNORE && IGNORE.test(p)) });
+const config = repoReader(REPO, { allow: (p) => baseRule(p) && !ignoredTracked.has(p) });
+const isRegularFile = config.isRegularFile;
+const readRepo = config.read;
 
 const FILES = TREE.replace(/\.json$/, '') + '.files.json';
 if (!existsSync(FILES)) { console.error(`${FILES} not found: run \`loupe scan\` first (relations needs its file map; manifest trees don't have one)`); process.exit(2); }
@@ -60,10 +71,10 @@ const wsDirs = root.children.map((c) => c.path).filter((p) => p && p !== '.').so
 const pkgOf = (f) => wsDirs.find((d) => f.startsWith(d + '/')) || '.';
 const mapEntries = Object.entries(fileMap).filter(([f]) => SRC_EXT.test(f) && !SECRET_FILE.test(f) && !(IGNORE && IGNORE.test(f)));
 const mapPaths = mapEntries.map(([f]) => f);
-const filters = gitSourceFilters(REPO, mapPaths, git, mapPaths, wsDirs);
+const filters = gitSourceFilters(REPO, mapPaths, git, mapPaths, wsDirs, ignoredTracked);
 for (const [f, node] of mapEntries) {
   if (filters.isSkippedPath(f)) continue;
-  const text = readRepo(f); if (!text) continue;
+  const text = source.read(f); if (!text) continue;
   if (!filters.isIncludedByAttr(f) && isMinified(text)) continue;
   files.set(f, { path: f, text, lines: text.split('\n'), node, pkg: pkgOf(f) });
 }

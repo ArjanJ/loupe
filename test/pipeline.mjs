@@ -7,7 +7,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync
 import { tmpdir } from 'node:os';
 import { join, dirname, delimiter } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { findOnPath, redactSecrets } from '../src/llm.mjs';
+import { findOnPath, redactSecrets, checkBaseUrl } from '../src/llm.mjs';
 import { answer } from './_stub-model.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -18,7 +18,7 @@ let failures = 0;
 const check = (ok, what, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if (!ok) { failures++; if (extra) console.log(String(extra).slice(0, 3000)); } };
 
 // ---------- stub HTTP server (Anthropic + OpenAI shapes) ----------
-const seen = { count: 0, auth: [], models: [], badKeyRequests: 0 };
+const seen = { count: 0, auth: [], models: [], prompts: [], badKeyRequests: 0 };
 const server = createServer((req, res) => {
   let body = '';
   req.on('data', (d) => (body += d));
@@ -28,6 +28,7 @@ const server = createServer((req, res) => {
     seen.count++; seen.auth.push(req.headers['x-api-key'] ? `x-api-key:${key}` : `bearer:${key}`);
     seen.models.push(JSON.parse(body).model);
     const prompt = JSON.parse(body).messages[0].content;
+    seen.prompts.push(prompt);
     const text = JSON.stringify(answer(prompt));
     res.writeHead(200, { 'content-type': 'application/json' });
     if (req.url === '/v1/messages') res.end(JSON.stringify({ type: 'message', role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text }] }));
@@ -457,6 +458,95 @@ try {
     r = await run(['relations', f6, relTree, '--backend', 'openai'], { ...stEnv, LOUPE_IGNORE: '^src/client\\.js$', LOUPE_NOLLM: '1' });
     const afterIgn = JSON.parse(readFileSync(relTree, 'utf8'));
     check(r.code === 0 && !afterIgn.root.relations.some((x) => x.kind === 'http'), 'secret files: LOUPE_IGNORE works in relations.mjs', JSON.stringify(afterIgn.root.relations));
+  }
+
+  // ---------- every file used in a prompt follows the source inclusion rules; symlinks are never read ----------
+  {
+    const f12 = fixture('f12-inclusion');
+    const commitAll = (msg) => { execFileSync(gitBin, ['add', '-A'], { cwd: f12, stdio: 'pipe' }); execFileSync(gitBin, ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', msg], { cwd: f12, stdio: 'pipe' }); };
+    writeFileSync(join(f12, '.gitignore'), 'CONTEXT.md\n.env.local\nsrc/ignored-but-tracked.js\n');
+    writeFileSync(join(f12, 'ARCHITECTURE.md'), '# EXCLUDED-NOTE-3\n');
+    writeFileSync(join(f12, '.env.local'), 'export const TOKEN = "ENV-SECRET-4";\n');
+    symlinkSync('../.env.local', join(f12, 'src', 'config.js'));
+    writeFileSync(join(f12, 'src', 'keys.js'), 'export const ANTHROPIC = "sk-ant-abcdefghijklmnopqrstuv";\n');
+    commitAll('inclusion');
+    writeFileSync(join(f12, 'src', 'ignored-but-tracked.js'), 'export const NOTE = "TRACKED-IGNORED-5";\n');
+    execFileSync(gitBin, ['add', '-f', 'src/ignored-but-tracked.js'], { cwd: f12, stdio: 'pipe' });
+    execFileSync(gitBin, ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'force-add'], { cwd: f12, stdio: 'pipe' });
+    writeFileSync(join(f12, 'README.md'), '# UNTRACKED-NOTE-1\n'); // untracked
+    writeFileSync(join(f12, 'CONTEXT.md'), '# IGNORED-NOTE-2\n'); // ignored
+    check(execFileSync(gitBin, ['ls-files', '-s', 'src/config.js'], { cwd: f12, encoding: 'utf8' }).startsWith('120000'), 'inclusion: src/config.js is a tracked symlink');
+    const p0 = seen.prompts.length;
+    r = await run(['map', f12, '--no-open', '--backend', 'openai'], { ...stEnv, LOUPE_IGNORE: '^ARCHITECTURE\\.md$' });
+    const sent = seen.prompts.slice(p0).join('\n');
+    const files12 = existsSync(join(f12, '.loupe', 'tree.files.json')) ? readFileSync(join(f12, '.loupe', 'tree.files.json'), 'utf8') : '';
+    check(r.code === 0 && sent.length > 0, 'inclusion: map runs', r.all);
+    for (const [needle, what] of [['UNTRACKED-NOTE-1', 'untracked README'], ['IGNORED-NOTE-2', 'gitignored CONTEXT.md'], ['EXCLUDED-NOTE-3', 'LOUPE_IGNOREd ARCHITECTURE.md'], ['ENV-SECRET-4', 'tracked symlink to an ignored .env.local'], ['TRACKED-IGNORED-5', 'tracked file matching .gitignore'], ['sk-ant-abcdefghijklmnopqrstuv', 'token-shaped secret in tracked source']]) {
+      check(!sent.includes(needle), `inclusion: ${what} never reaches a prompt`);
+    }
+    check(!files12.includes('src/config.js'), 'inclusion: symlinked source left out of the map', files12);
+    // relations reads only tracked files, whatever the sidecar lists
+    writeFileSync(join(f12, 'src', 'extra.js'), `export async function sneak() {\n  return fetch('/api/items');\n}\n`);
+    const side = JSON.parse(files12); side['src/extra.js'] = Object.values(side)[0];
+    writeFileSync(join(f12, '.loupe', 'tree.files.json'), JSON.stringify(side));
+    r = await run(['relations', f12, join(f12, '.loupe', 'tree.json'), '--backend', 'openai'], { ...stEnv, LOUPE_NOLLM: '1' });
+    const relText = readFileSync(join(f12, '.loupe', 'tree.json'), 'utf8');
+    check(r.code === 0 && !relText.includes('src/extra.js'), 'inclusion: relations ignores untracked files listed in the sidecar', r.all);
+    r = await run(['map', f12, '--no-open', '--backend', 'openai'], { ...stEnv, LOUPE_IGNORE: '(' });
+    check(r.code === 2 && /invalid LOUPE_IGNORE/.test(r.err), 'inclusion: invalid LOUPE_IGNORE is a friendly error', r.all);
+  }
+
+  // ---------- review regressions: .gitattributes re-include, LOUPE_IGNORE vs config files, relations without git ----------
+  {
+    const f14 = fixture('f14-reinclude');
+    const c14 = (msg) => execFileSync(gitBin, ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', msg], { cwd: f14, stdio: 'pipe' });
+    writeFileSync(join(f14, '.gitignore'), 'src/sdk.js\nsrc/plain-ignored.js\n');
+    writeFileSync(join(f14, '.gitattributes'), 'src/sdk.js linguist-generated=false\n');
+    writeFileSync(join(f14, 'src', 'sdk.js'), 'export function sdkCall() {\n  return 1;\n}\n');
+    writeFileSync(join(f14, 'src', 'plain-ignored.js'), 'export function hidden() {\n  return 2;\n}\n');
+    execFileSync(gitBin, ['add', '-A', '-f'], { cwd: f14, stdio: 'pipe' }); c14('re-include');
+    r = await run(['map', f14, '--no-open', '--backend', 'openai'], { ...stEnv, LOUPE_IGNORE: '\\.(json|ya?ml)$' });
+    const files14 = existsSync(join(f14, '.loupe', 'tree.files.json')) ? JSON.parse(readFileSync(join(f14, '.loupe', 'tree.files.json'), 'utf8')) : {};
+    const tree14 = existsSync(join(f14, '.loupe', 'tree.json')) ? JSON.parse(readFileSync(join(f14, '.loupe', 'tree.json'), 'utf8')) : null;
+    check(r.code === 0 && Object.hasOwn(files14, 'src/sdk.js') && !Object.hasOwn(files14, 'src/plain-ignored.js'), 'review: gitignored file re-included by .gitattributes is mapped, a plain ignored one is not', JSON.stringify(files14) + r.all);
+    check(tree14?.root?.children?.[0]?.packageName === 'fixture-app', 'review: LOUPE_IGNORE matching *.json still reads package.json for the layout', JSON.stringify(tree14?.root?.children?.map((c) => c.packageName)));
+
+    const noGit = join(TMP, 'f14-nogit'); mkdirSync(join(noGit, 'src'), { recursive: true });
+    writeFileSync(join(noGit, 'src', 'util.js'), 'export const x = 1;\n');
+    writeFileSync(join(noGit, 't.tree.json'), JSON.stringify({ meta: {}, root: { id: 'system', label: 'S', children: [], edges: [] } }));
+    writeFileSync(join(noGit, 't.tree.files.json'), '{}');
+    r = await run(['relations', noGit, join(noGit, 't.tree.json'), '--backend', 'openai'], { ...stEnv, LOUPE_NOLLM: '1', GIT_CEILING_DIRECTORIES: TMP });
+    check(r.code === 2 && /not inside a git repository/.test(r.err) && !/at .*node:/.test(r.err), 'review: relations outside a git repo is a friendly error, not a stack trace', r.all);
+  }
+
+  // ---------- prompt redaction keeps ordinary URLs readable, still blanks secret-named parameters ----------
+  {
+    const pr = (x) => redactSecrets(x, { urls: 'secrets' });
+    const plain = 'fetch("https://api.github.com/repos/o/r/git/trees/main?recursive=1&per_page=100#readme")';
+    check(pr(plain) === plain, 'prompt redaction: an ordinary query string and fragment are left alone', pr(plain));
+    check(pr('https://x.example/cb?state=ok&access_token=abc123DEF456&next=/home') === 'https://x.example/cb?state=ok&access_token=***&next=/home', 'prompt redaction: a secret-named parameter value is blanked', pr('https://x.example/cb?state=ok&access_token=abc123DEF456&next=/home'));
+    check(pr('`https://x.example/cb?token=${token}`') === '`https://x.example/cb?token=${token}`', 'prompt redaction: a template placeholder is not a secret');
+    check(pr('https://user:hunter2@db.example/x') === 'https://***@db.example/x' && pr('k = "sk-ant-abcdefghijklmnop"') === 'k = "***"', 'prompt redaction: URL credentials and token shapes still blanked');
+    check(redactSecrets(plain).includes('?***'), 'prompt redaction: the default (errors, evidence) still blanks whole query strings');
+  }
+
+  // ---------- API base URLs must be https (or loopback http) ----------
+  {
+    const f13 = fixture('f13-base-url');
+    for (const [env, val] of [['OPENAI_BASE_URL', 'http://api.example.com/v1'], ['OPENAI_BASE_URL', 'https://user:pw@api.example.com/v1'], ['OPENAI_BASE_URL', 'not a url']]) {
+      const cBefore = seen.count;
+      r = await run(['map', f13, '--no-open', '--backend', 'openai'], { ...stEnv, [env]: val });
+      check(r.code === 2 && r.err.includes(env) && seen.count === cBefore && !r.all.includes(KEY), `base url: ${env}=${val} refused before any request`, r.all);
+    }
+    r = await run(['map', f13, '--no-open', '--backend', 'anthropic'], { ...stEnv, ANTHROPIC_API_KEY: KEY, ANTHROPIC_BASE_URL: 'http://10.0.0.5:8080' });
+    check(r.code === 2 && r.err.includes('ANTHROPIC_BASE_URL'), 'base url: plain http to a non-loopback host refused', r.all);
+    check(r.err.includes('LOUPE_ALLOW_HTTP'), 'base url: the refusal names the opt-in', r.err);
+    // the opt-in, checked directly so the test never opens a connection
+    const tryUrl = (v) => { try { return checkBaseUrl('OPENAI_BASE_URL', v); } catch (e) { return e.message; } };
+    process.env.LOUPE_ALLOW_HTTP = '1';
+    const allowed = tryUrl('http://192.0.2.1:9/v1/'), stillBad = tryUrl('ftp://192.0.2.1/v1');
+    delete process.env.LOUPE_ALLOW_HTTP;
+    check(allowed === 'http://192.0.2.1:9/v1' && /https/.test(stillBad) && /plain http/.test(tryUrl('http://192.0.2.1:9/v1')) && tryUrl('http://localhost:1234/v1') === 'http://localhost:1234/v1', 'base url: LOUPE_ALLOW_HTTP=1 allows plain http, and only http', `${allowed} | ${stillBad}`);
   }
 
   // ---------- LOUPE_EFFORT allow-list ----------

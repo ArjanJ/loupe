@@ -1,7 +1,7 @@
 // Safe filesystem helpers: refuse symlinks / non-regular targets, realpath-confine dirs inside a repo,
 // and write files atomically via a temp file + rename so writes never follow a symlink.
-import { lstatSync, mkdirSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { closeSync, constants as fsc, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { dirname, isAbsolute, join, posix, relative, resolve, sep } from 'node:path';
 import { randomBytes } from 'node:crypto';
 
 export class SafeFsError extends Error {}
@@ -104,4 +104,54 @@ export function safeWriteFile(filePath, content, { withinDir = null } = {}) {
     try { unlinkSync(tmp); } catch {}
     throw e;
   }
+}
+
+// Read files from an untrusted checkout. A path is readable only when it is
+//   - a plain relative path inside the repo (no "..", not absolute),
+//   - allowed by `allow(path)` (tracked by git, not secret-looking, not LOUPE_IGNOREd, ...),
+//   - a regular file of at most `maxBytes`, with no symlink anywhere on the way: neither the file itself
+//     (a tracked `src/config.ts -> ../.env.local` would otherwise send an ignored secret as source)
+//     nor any directory above it.
+// The final open uses O_NOFOLLOW where the platform has it, and the opened file must still be the one at the
+// symlink-free path under the real repo root, so a file or parent directory swapped for a symlink after the check is not read.
+export function repoReader(repo, { allow = () => true, maxBytes = 1024 * 1024 } = {}) {
+  const base = resolve(repo);
+  const norm = (p) => {
+    // a backslash is a path separator only on Windows; elsewhere it is an ordinary file name character
+    const n = posix.normalize(sep === '\\' ? String(p).replace(/\\/g, '/') : String(p));
+    return !n || n === '.' || n === '..' || n.startsWith('../') || n.startsWith('/') || isAbsolute(n) ? null : n.replace(/\/+$/, '');
+  };
+  // every component from the repo root down must exist and be a real directory (or the final regular file)
+  const walk = (n, last) => {
+    const segs = n.split('/');
+    let cur = base;
+    for (let i = 0; i < segs.length; i++) {
+      cur = join(cur, segs[i]);
+      const st = lst(cur);
+      if (!st || st.isSymbolicLink()) return null;
+      if (i < segs.length - 1 ? !st.isDirectory() : !last(st)) return null;
+    }
+    return cur;
+  };
+  const isDir = (p) => { const n = p === '.' || p === '' ? '.' : norm(p); if (n === '.') return true; return !!n && !!walk(n, (st) => st.isDirectory()); };
+  const isRegularFile = (p) => { const n = norm(p); return !!n && allow(n) && !!walk(n, (st) => st.isFile() && st.size <= maxBytes); };
+  const read = (p) => {
+    const n = norm(p);
+    if (!n || !allow(n)) return '';
+    const full = walk(n, (st) => st.isFile() && st.size <= maxBytes);
+    if (!full) return '';
+    let fd;
+    try {
+      fd = openSync(full, fsc.O_RDONLY | (fsc.O_NOFOLLOW || 0));
+      const st = fstatSync(fd);
+      if (!st.isFile() || st.size > maxBytes) return '';
+      // the path, resolved now, must have no symlink in it and must name the file we hold open
+      const expected = join(realpathSync(base), ...n.split('/'));
+      if (realpathSync(full) !== expected) return '';
+      const now = statSync(expected);
+      if (now.dev !== st.dev || now.ino !== st.ino) return '';
+      return readFileSync(fd, 'utf8');
+    } catch { return ''; } finally { if (fd !== undefined) try { closeSync(fd); } catch {} }
+  };
+  return { isRegularFile, isDir, read };
 }
